@@ -30,3 +30,26 @@
 
 ### Prossimo passo unico
 - Stabilizzare CSV classifica app e validare su batch reale più ampio.
+
+## 2026-03-16 — Formalizzazione documentale, test reali multi-server e continuità sviluppo
+
+### Stato raggiunto
+- Creato il file `docs/milestones.md` come registro append-only del progetto.
+- Consolidata la pratica di tracciare stato, decisioni, problemi aperti e prossimo passo unico.
+- Allineato il repository GitHub come fonte primaria di codice e documentazione.
+- Eseguiti test run completi del tool su 2 server reali (WP E e WP X) con output JSON/CSV validato.
+
+### Decisioni prese
+- Un solo milestone log per il progetto, senza file paralleli di note operative.
+- `README.md` come documento principale del progetto.
+- `docs/milestones.md` come memoria cronologica delle decisioni e dello stato reale.
+- Le milestone devono supportare ripresa del lavoro a distanza di giorni o settimane e lettura da parte di strumenti come NotebookLM.
+
+### Problemi aperti
+- La documentazione tecnica e operativa è ancora mista tra inglese e italiano.
+- Possibile carico cognitivo elevato durante analisi operative del tool.
+- Strategia di localizzazione del tool ancora da definire.
+
+### Prossimo passo unico
+- Definire e implementare una strategia i18n/l10n del tool con output operativi in italiano e struttura tecnica coerente.
+
