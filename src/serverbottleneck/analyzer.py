@@ -31,13 +31,16 @@ def build_report(
     snapshot = collect_fixture_snapshot() if fixture_mode else collect_server_snapshot()
     apps = discover_applications(applications_root)
     window_start, window_end = select_analysis_window(apps, inspection_timestamp, fixture_mode)
-    ranked_apps = rank_apps_by_backend_traffic(apps, window_start, window_end)
-    suspects = ranked_apps[:top_n]
-
-    analyses = [
-        analyze_app(ranked_app, window_start, window_end, fixture_mode=fixture_mode)
-        for ranked_app in suspects
+    initial_ranked_apps = rank_apps_by_backend_traffic(apps, window_start, window_end)
+    all_analyses = [
+        analyze_app(ranked_app, window_start, window_end, fixture_mode=fixture_mode, include_enrichment=False)
+        for ranked_app in initial_ranked_apps
     ]
+    all_analyses.sort(key=analysis_sort_key)
+    ranked_apps = [analysis.ranked_app for analysis in all_analyses]
+    analyses = all_analyses[:top_n]
+    for analysis in analyses:
+        enrich_analysis(analysis, fixture_mode)
     warnings = build_actionable_warnings(analyses, snapshot)
 
     return AnalysisReport(
@@ -100,7 +103,13 @@ def rank_apps_by_backend_traffic(apps: list[AppPaths], start: datetime, end: dat
     return ranked
 
 
-def analyze_app(ranked_app: RankedApp, start: datetime, end: datetime, fixture_mode: bool = False) -> AppAnalysis:
+def analyze_app(
+    ranked_app: RankedApp,
+    start: datetime,
+    end: datetime,
+    fixture_mode: bool = False,
+    include_enrichment: bool = False,
+) -> AppAnalysis:
     app = ranked_app.app
     backend_summary = analyze_backend(app, start, end)
     static_summary = analyze_static(app, start, end)
@@ -108,15 +117,29 @@ def analyze_app(ranked_app: RankedApp, start: datetime, end: datetime, fixture_m
     php_slow_summary = analyze_php_slow(app, start, end)
     cron_summary = analyze_wp_cron(app)
     error_summary = analyze_backend_errors(app)
-    enrichment = fixture_wp_enrichment() if fixture_mode else collect_wp_enrichment(app.app_root)
-    ranked_app.home_url = enrichment.get("home_url")
-    ranked_app.blogname = enrichment.get("blogname")
+    enrichment = fixture_wp_enrichment() if fixture_mode or not include_enrichment else collect_wp_enrichment(app.app_root)
     categories = classify_app(backend_summary, static_summary, php_summary, php_slow_summary, cron_summary)
     categories = add_error_heavy_label(categories, error_summary)
-    priority = compute_priority(categories, backend_summary, php_summary, php_slow_summary, cron_summary, error_summary)
+    suspicion_score = compute_suspicion_score(categories, backend_summary, static_summary, php_summary, php_slow_summary, cron_summary, error_summary)
+    priority = compute_priority(
+        categories,
+        backend_summary,
+        php_summary,
+        php_slow_summary,
+        cron_summary,
+        error_summary,
+        suspicion_score,
+    )
+    ranked_app.suspicion_score = suspicion_score
+    ranked_app.priority = priority
+    ranked_app.categories = categories
+    if include_enrichment:
+        ranked_app.home_url = enrichment.get("home_url")
+        ranked_app.blogname = enrichment.get("blogname")
     return AppAnalysis(
         ranked_app=ranked_app,
         priority=priority,
+        suspicion_score=suspicion_score,
         categories=categories,
         backend_summary=backend_summary,
         static_summary=static_summary,
@@ -126,6 +149,16 @@ def analyze_app(ranked_app: RankedApp, start: datetime, end: datetime, fixture_m
         error_summary=error_summary,
         enrichment=enrichment,
     )
+
+
+def enrich_analysis(analysis: AppAnalysis, fixture_mode: bool) -> None:
+    if fixture_mode:
+        analysis.enrichment = fixture_wp_enrichment()
+        return
+    enrichment = collect_wp_enrichment(analysis.ranked_app.app.app_root)
+    analysis.enrichment = enrichment
+    analysis.ranked_app.home_url = enrichment.get("home_url")
+    analysis.ranked_app.blogname = enrichment.get("blogname")
 
 
 def analyze_backend(app: AppPaths, start: datetime, end: datetime) -> dict:
@@ -446,6 +479,7 @@ def compute_priority(
     php_slow: dict,
     cron: dict,
     error_summary: dict,
+    suspicion_score: int,
 ) -> str:
     php_p95 = php.get("p95_latency_sec") or 0.0
     php_total = php.get("total_requests", 0)
@@ -473,11 +507,60 @@ def compute_priority(
         or cron.get("run_count", 0) >= 5
     )
 
-    if strong_php_evidence:
+    if strong_php_evidence and suspicion_score >= 60:
         return "ALTA"
     if moderate_pressure:
         return "MEDIA"
     return "BASSA"
+
+
+def compute_suspicion_score(
+    categories: list[str],
+    backend: dict,
+    static: dict,
+    php: dict,
+    php_slow: dict,
+    cron: dict,
+    error_summary: dict,
+) -> int:
+    score = 0
+    backend_total = backend.get("total_requests", 0)
+    php_p95 = php.get("p95_latency_sec") or 0.0
+    costly_request_count = php.get("costly_request_count", 0)
+    slow_event_count = php_slow.get("slow_event_count", 0)
+    cron_runs = cron.get("run_count", 0)
+    error_total = error_summary.get("total_events", 0)
+    bot_requests = backend.get("bot_requests", 0) + static.get("bot_requests", 0)
+
+    score += min(backend_total // 25, 12)
+    if php_p95 >= 2.5:
+        score += 24
+    elif php_p95 >= 2.0:
+        score += 18
+    elif php_p95 >= 1.5:
+        score += 10
+    score += min(costly_request_count * 8, 24)
+    score += min(slow_event_count * 10, 30)
+    score += min(cron_runs, 10)
+    score += min(error_total, 10)
+    score += min(bot_requests // 10, 8)
+    if "cache churn suspected" in categories:
+        score += 8
+    if "error-heavy" in categories:
+        score += 8
+    if "bot/probe heavy" in categories:
+        score += 8
+    return score
+
+
+def analysis_sort_key(analysis: AppAnalysis) -> tuple:
+    priority_rank = {"ALTA": 0, "MEDIA": 1, "BASSA": 2}
+    return (
+        -analysis.suspicion_score,
+        priority_rank.get(analysis.priority, 9),
+        -analysis.ranked_app.request_count,
+        analysis.ranked_app.app.app_id,
+    )
 
 
 def build_actionable_warnings(analyses: list[AppAnalysis], snapshot) -> list[str]:

@@ -123,6 +123,7 @@ def render_app_analysis(analysis: AppAnalysis) -> list[str]:
     italian_labels = translate_labels(analysis.categories)
     lines = [f"Deep Dive: {label} [{app.app_id}]"]
     lines.append(f"Priority: {analysis.priority}")
+    lines.append(f"Suspicion score: {analysis.suspicion_score}")
     lines.append(f"Etichette operative: {', '.join(italian_labels)}")
     lines.append("Cosa controllare subito:")
     lines.extend(f"  - {item}" for item in build_immediate_actions(italian_labels))
@@ -211,8 +212,8 @@ def build_immediate_actions(italian_labels: list[str]) -> list[str]:
     return actions[:4]
 
 
-def export_json(report: AnalysisReport, path: Path | None) -> None:
-    payload = build_json_payload(report)
+def export_json(report: AnalysisReport, path: Path | None, include_debug: bool = False) -> None:
+    payload = build_json_payload(report, include_debug=include_debug)
     text = json.dumps(payload, indent=2, default=str)
     if path:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -231,6 +232,7 @@ def export_csv(report: AnalysisReport, path: Path) -> None:
                 "server_name",
                 "app_id",
                 "priority",
+                "suspicion_score",
                 "backend_requests",
                 "avg_latency_sec",
                 "p95_latency_sec",
@@ -279,6 +281,7 @@ def build_csv_row(report: AnalysisReport, analysis: AppAnalysis) -> list:
         report.server_name,
         analysis.ranked_app.app.app_id,
         analysis.priority,
+        analysis.suspicion_score,
         analysis.backend_summary.get("total_requests", 0),
         analysis.php_summary.get("avg_latency_sec"),
         analysis.php_summary.get("p95_latency_sec"),
@@ -293,26 +296,28 @@ def build_csv_row(report: AnalysisReport, analysis: AppAnalysis) -> list:
     ]
 
 
-def build_json_payload(report: AnalysisReport) -> dict:
+def build_json_payload(report: AnalysisReport, include_debug: bool = False) -> dict:
     analyzed_by_app_id = {analysis.ranked_app.app.app_id: analysis for analysis in report.app_analyses}
     ranked_apps_payload = []
     for idx, ranked in enumerate(report.ranked_apps, start=1):
-        analysis = analyzed_by_app_id.get(ranked.app.app_id)
         ranked_apps_payload.append(
             {
                 "rank": idx,
                 "app_id": ranked.app.app_id,
                 "display_name": ranked.blogname or ranked.home_url or ranked.app.app_id,
                 "backend_requests": ranked.request_count,
-                "priority": analysis.priority if analysis else None,
-                "labels_it": translate_labels(analysis.categories) if analysis else [],
+                "priority": ranked.priority,
+                "suspicion_score": ranked.suspicion_score,
+                "labels_it": translate_labels(ranked.categories),
             }
         )
 
     top_suspects_payload = [build_compact_app_summary(report, analysis) for analysis in report.app_analyses]
     app_details_payload = [build_app_detail_payload(report, analysis) for analysis in report.app_analyses]
+    high_priority_total = sum(1 for ranked in report.ranked_apps if ranked.priority == "ALTA")
+    top_suspect_high_priority = sum(1 for analysis in report.app_analyses if analysis.priority == "ALTA")
 
-    return {
+    payload = {
         "contract_version": "serverbottleneck.v1",
         "generated_at_utc": isoformat_utc(report.inspection_timestamp),
         "server_name": report.server_name,
@@ -337,9 +342,16 @@ def build_json_payload(report: AnalysisReport) -> dict:
         },
         "ranked_apps": ranked_apps_payload,
         "top_suspect_apps": top_suspects_payload,
+        "high_priority_total": high_priority_total,
+        "additional_high_priority_count": max(0, high_priority_total - top_suspect_high_priority),
         "app_details": app_details_payload,
         "final_warnings": report.actionable_warnings,
     }
+    if include_debug:
+        payload["debug"] = {
+            "app_details_verbose": [build_app_detail_payload(report, analysis, include_debug=True) for analysis in report.app_analyses]
+        }
+    return payload
 
 
 def build_compact_app_summary(report: AnalysisReport, analysis: AppAnalysis) -> dict:
@@ -349,87 +361,90 @@ def build_compact_app_summary(report: AnalysisReport, analysis: AppAnalysis) -> 
         "app_id": analysis.ranked_app.app.app_id,
         "display_name": analysis.ranked_app.blogname or analysis.ranked_app.home_url or analysis.ranked_app.app.app_id,
         "priority": analysis.priority,
+        "suspicion_score": analysis.suspicion_score,
         "backend_requests": analysis.backend_summary.get("total_requests", 0),
         "labels_it": italian_labels,
         "main_action_it": actions[0] if actions else None,
     }
 
 
-def build_app_detail_payload(report: AnalysisReport, analysis: AppAnalysis) -> dict:
+def build_app_detail_payload(report: AnalysisReport, analysis: AppAnalysis, include_debug: bool = False) -> dict:
     italian_labels = translate_labels(analysis.categories)
     actions = build_immediate_actions(italian_labels)
     bot_requests = analysis.backend_summary.get("bot_requests", 0) + analysis.static_summary.get("bot_requests", 0)
-    return {
+    payload = {
         "app_id": analysis.ranked_app.app.app_id,
         "display_name": analysis.ranked_app.blogname or analysis.ranked_app.home_url or analysis.ranked_app.app.app_id,
-        "log_directory": str(analysis.ranked_app.app.log_dir),
         "priority": analysis.priority,
-        "labels_en": analysis.categories,
+        "suspicion_score": analysis.suspicion_score,
         "labels_it": italian_labels,
-        "immediate_actions_it": actions,
-        "ranking_metrics": {
+        "main_action_it": actions[0] if actions else None,
+        "summary": {
             "backend_requests": analysis.backend_summary.get("total_requests", 0),
             "top_ip_share_pct": analysis.backend_summary.get("top_ip_share_pct", 0),
             "bot_requests": bot_requests,
             "backend_error_count": analysis.error_summary.get("total_events", 0),
-        },
-        "backend": {
-            "top_paths": build_pair_objects(analysis.backend_summary.get("top_paths", []), "path"),
-            "top_ips": build_pair_objects(analysis.backend_summary.get("top_ips", []), "ip"),
-            "top_status_codes": build_pair_objects(analysis.backend_summary.get("top_status_codes", []), "status_code"),
-            "sensitive_endpoints": build_pair_objects(analysis.backend_summary.get("sensitive_endpoints", []), "endpoint"),
-            "top_ip_share_pct": analysis.backend_summary.get("top_ip_share_pct", 0),
-            "internal_requests": analysis.backend_summary.get("internal_requests", 0),
-            "bot_requests": analysis.backend_summary.get("bot_requests", 0),
-        },
-        "static": {
-            "top_suspicious_paths": build_pair_objects(analysis.static_summary.get("top_suspicious_paths", []), "path"),
-            "top_assets": build_pair_objects(analysis.static_summary.get("top_assets", []), "path"),
-            "bot_requests": analysis.static_summary.get("bot_requests", 0),
-        },
-        "php_access": {
-            "total_requests": analysis.php_summary.get("total_requests", 0),
-            "top_final_targets": build_pair_objects(analysis.php_summary.get("top_final_targets", []), "target"),
-            "latency_buckets": build_pair_objects(analysis.php_summary.get("latency_buckets", []), "bucket"),
-            "memory_buckets": build_pair_objects(analysis.php_summary.get("memory_buckets", []), "bucket"),
             "avg_latency_sec": analysis.php_summary.get("avg_latency_sec"),
             "p95_latency_sec": analysis.php_summary.get("p95_latency_sec"),
-            "avg_memory_mb": analysis.php_summary.get("avg_memory_mb"),
             "costly_request_count": analysis.php_summary.get("costly_request_count", 0),
-            "expensive_samples": analysis.php_summary.get("expensive_samples", []),
-            "costly_samples": analysis.php_summary.get("costly_samples", []),
-        },
-        "php_slow": {
             "slow_event_count": analysis.php_slow_summary.get("slow_event_count", 0),
-            "top_slow_plugins": build_pair_objects(analysis.php_slow_summary.get("top_slow_plugins", []), "plugin"),
-            "top_slow_paths": build_pair_objects(analysis.php_slow_summary.get("top_slow_paths", []), "script_filename"),
-            "top_slow_signatures": build_pair_objects(analysis.php_slow_summary.get("top_slow_signatures", []), "signature"),
-            "top_slow_plugin_combinations": build_pair_objects(
-                analysis.php_slow_summary.get("top_slow_plugin_combinations", []),
-                "plugin_combination",
-            ),
-            "functional_categories": build_pair_objects(analysis.php_slow_summary.get("functional_categories", []), "category"),
-            "sample_events": analysis.php_slow_summary.get("sample_events", []),
+            "cron_runs": analysis.cron_summary.get("run_count", 0),
         },
-        "wp_cron": {
-            "run_count": analysis.cron_summary.get("run_count", 0),
-            "top_events": build_pair_objects(analysis.cron_summary.get("top_events", []), "event_name"),
-            "tracked_marker_hits": build_pair_objects(analysis.cron_summary.get("tracked_marker_hits", []), "marker"),
-        },
-        "backend_errors": {
-            "total_events": analysis.error_summary.get("total_events", 0),
-            "top_signatures": build_pair_objects(analysis.error_summary.get("top_signatures", []), "signature"),
-            "top_files": build_pair_objects(analysis.error_summary.get("top_files", []), "file"),
-            "top_severities": build_pair_objects(analysis.error_summary.get("top_severities", []), "severity"),
-        },
-        "enrichment": {
-            "home_url": analysis.enrichment.get("home_url"),
-            "blogname": analysis.enrichment.get("blogname"),
-            "plugins": analysis.enrichment.get("plugins", []),
-            "cron_events": analysis.enrichment.get("cron_events", []),
-            "mode": analysis.enrichment.get("mode"),
+        "signals": {
+            "top_backend_path": first_pair_value(analysis.backend_summary.get("top_paths", [])),
+            "top_php_target": first_pair_value(analysis.php_summary.get("top_final_targets", [])),
+            "top_slow_plugin": first_pair_value(analysis.php_slow_summary.get("top_slow_plugins", [])),
+            "top_backend_error_file": first_pair_value(analysis.error_summary.get("top_files", [])),
+            "top_cron_event": first_pair_value(analysis.cron_summary.get("top_events", [])),
         },
     }
+    if include_debug:
+        payload["debug"] = {
+            "log_directory": str(analysis.ranked_app.app.log_dir),
+            "labels_en": analysis.categories,
+            "immediate_actions_it": actions,
+            "backend": {
+                "top_paths": build_pair_objects(analysis.backend_summary.get("top_paths", []), "path"),
+                "top_ips": build_pair_objects(analysis.backend_summary.get("top_ips", []), "ip"),
+                "top_status_codes": build_pair_objects(analysis.backend_summary.get("top_status_codes", []), "status_code"),
+                "sensitive_endpoints": build_pair_objects(analysis.backend_summary.get("sensitive_endpoints", []), "endpoint"),
+            },
+            "static": {
+                "top_suspicious_paths": build_pair_objects(analysis.static_summary.get("top_suspicious_paths", []), "path"),
+                "top_assets": build_pair_objects(analysis.static_summary.get("top_assets", []), "path"),
+            },
+            "php_access": {
+                "latency_buckets": build_pair_objects(analysis.php_summary.get("latency_buckets", []), "bucket"),
+                "memory_buckets": build_pair_objects(analysis.php_summary.get("memory_buckets", []), "bucket"),
+                "expensive_samples": analysis.php_summary.get("expensive_samples", []),
+                "costly_samples": analysis.php_summary.get("costly_samples", []),
+            },
+            "php_slow": {
+                "top_slow_signatures": build_pair_objects(analysis.php_slow_summary.get("top_slow_signatures", []), "signature"),
+                "top_slow_plugin_combinations": build_pair_objects(
+                    analysis.php_slow_summary.get("top_slow_plugin_combinations", []),
+                    "plugin_combination",
+                ),
+                "functional_categories": build_pair_objects(analysis.php_slow_summary.get("functional_categories", []), "category"),
+                "sample_events": analysis.php_slow_summary.get("sample_events", []),
+            },
+            "wp_cron": {
+                "tracked_marker_hits": build_pair_objects(analysis.cron_summary.get("tracked_marker_hits", []), "marker"),
+            },
+            "backend_errors": {
+                "top_signatures": build_pair_objects(analysis.error_summary.get("top_signatures", []), "signature"),
+                "top_files": build_pair_objects(analysis.error_summary.get("top_files", []), "file"),
+                "top_severities": build_pair_objects(analysis.error_summary.get("top_severities", []), "severity"),
+            },
+            "enrichment": {
+                "home_url": analysis.enrichment.get("home_url"),
+                "blogname": analysis.enrichment.get("blogname"),
+                "plugins": analysis.enrichment.get("plugins", []),
+                "cron_events": analysis.enrichment.get("cron_events", []),
+                "mode": analysis.enrichment.get("mode"),
+            },
+        }
+    return payload
 
 
 def build_pair_objects(pairs: list[tuple], key_name: str) -> list[dict]:
@@ -441,3 +456,10 @@ def build_pair_objects(pairs: list[tuple], key_name: str) -> list[dict]:
 
 def isoformat_utc(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def first_pair_value(pairs: list[tuple]):
+    if not pairs:
+        return None
+    key, count = pairs[0]
+    return {"value": key, "count": count}

@@ -16,6 +16,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fixture-mode", action="store_true", help="Skip live system snapshot and wp-cli enrichment")
     parser.add_argument("--output-dir", type=Path, default=None, help="Persist text and JSON reports under a dated directory tree")
     parser.add_argument("--server-name", default=socket.gethostname(), help="Server identifier used in report content and output paths")
+    parser.add_argument("--debug-json", action="store_true", help="Include verbose per-app debug detail in JSON output")
     parser.add_argument("--json-out", type=Path, default=None, help="Optional JSON report path")
     parser.add_argument("--csv-out", type=Path, default=None, help="Optional CSV summary path")
     return parser
@@ -35,10 +36,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.output_dir:
         paths = build_report_paths(args.output_dir, args.server_name, report.inspection_timestamp)
         write_text_report(report, paths["text"])
-        export_json(report, paths["json"])
+        export_json(report, paths["json"], include_debug=args.debug_json)
         export_csv(report, paths["csv"])
     if args.json_out:
-        export_json(report, args.json_out)
+        export_json(report, args.json_out, include_debug=args.debug_json)
     if args.csv_out:
         export_csv(report, args.csv_out)
     return 0

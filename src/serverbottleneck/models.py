@@ -38,6 +38,9 @@ class AppPaths:
 class RankedApp:
     app: AppPaths
     request_count: int
+    suspicion_score: int = 0
+    priority: str | None = None
+    categories: list[str] = field(default_factory=list)
     home_url: str | None = None
     blogname: str | None = None
 
@@ -111,6 +114,7 @@ class SlowLogEvent:
 class AppAnalysis:
     ranked_app: RankedApp
     priority: str
+    suspicion_score: int
     categories: list[str]
     backend_summary: dict
     static_summary: dict
