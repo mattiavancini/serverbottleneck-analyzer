@@ -338,7 +338,6 @@ def build_json_payload(report: AnalysisReport, include_debug: bool = False) -> d
             "php_fpm_process_count": report.snapshot.php_fpm_process_count,
             "top_cpu_processes": report.snapshot.top_cpu_processes,
             "top_memory_processes": report.snapshot.top_memory_processes,
-            "wp_related_processes": report.snapshot.wp_related_processes,
         },
         "ranked_apps": ranked_apps_payload,
         "top_suspect_apps": top_suspects_payload,
@@ -349,6 +348,9 @@ def build_json_payload(report: AnalysisReport, include_debug: bool = False) -> d
     }
     if include_debug:
         payload["debug"] = {
+            "server_snapshot": {
+                "wp_related_processes": report.snapshot.wp_related_processes,
+            },
             "app_details_verbose": [build_app_detail_payload(report, analysis, include_debug=True) for analysis in report.app_analyses]
         }
     return payload
