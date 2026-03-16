@@ -1,0 +1,1 @@
+"""Cloudways-style hourly analyzer."""
