@@ -19,6 +19,16 @@ class ServerSnapshot:
     top_cpu_processes: list[str]
     top_memory_processes: list[str]
     wp_related_processes: list[str]
+    redis_detected: bool = False
+    redis_reachable: bool = False
+    redis_used_memory_human: str | None = None
+    redis_used_memory_peak_human: str | None = None
+    redis_connected_clients: int | None = None
+    redis_keyspace_hits: int | None = None
+    redis_keyspace_misses: int | None = None
+    redis_evicted_keys: int | None = None
+    redis_uptime_in_seconds: int | None = None
+    redis_status: str = "UNAVAILABLE"
 
 
 @dataclass

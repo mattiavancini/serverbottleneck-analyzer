@@ -98,6 +98,10 @@ def render_text(report: AnalysisReport) -> str:
         lines.extend(f"  {line}" for line in snapshot.top_memory_processes or ["  none seen"])
         lines.append("WP/CLI process presence:")
         lines.extend(f"  {line}" for line in snapshot.wp_related_processes or ["  none seen"])
+        lines.append(
+            f"Redis: status={snapshot.redis_status} detected={snapshot.redis_detected} reachable={snapshot.redis_reachable} "
+            f"used={snapshot.redis_used_memory_human or 'n/a'} peak={snapshot.redis_used_memory_peak_human or 'n/a'}"
+        )
     lines.append("")
     lines.append(
         f"Top Apps In Last Completed UTC Hour: {report.ranking_window_start.isoformat()} to {report.ranking_window_end.isoformat()}"
@@ -155,6 +159,7 @@ def render_app_analysis(analysis: AppAnalysis) -> list[str]:
     lines.append(f"  slow event count: {analysis.php_slow_summary.get('slow_event_count', 0)}")
     lines.extend(format_pairs(analysis.php_slow_summary.get("top_slow_plugins"), "  top slow plugins"))
     lines.extend(format_pairs(analysis.php_slow_summary.get("top_slow_paths"), "  top slow paths"))
+    lines.extend(format_pairs(analysis.php_slow_summary.get("entrypoint_signals"), "  slow entrypoint signals"))
     lines.extend(format_pairs(analysis.php_slow_summary.get("top_slow_signatures"), "  top slow signatures"))
     lines.extend(format_pairs(analysis.php_slow_summary.get("top_slow_plugin_combinations"), "  top plugin combinations"))
     lines.extend(format_pairs(analysis.php_slow_summary.get("functional_categories"), "  functional categories"))
@@ -166,6 +171,19 @@ def render_app_analysis(analysis: AppAnalysis) -> list[str]:
     lines.append(f"  cron runs: {analysis.cron_summary.get('run_count', 0)}")
     lines.extend(format_pairs(analysis.cron_summary.get("top_events"), "  top events"))
     lines.extend(format_pairs(analysis.cron_summary.get("tracked_marker_hits"), "  tracked markers"))
+    lines.append(f"  cron signal strength: {analysis.enrichment.get('cron_signal_strength')}")
+    lines.extend(format_named_counts(analysis.enrichment.get("cron_top_hooks"), "  top wp-cli hooks", "hook"))
+    lines.extend(format_named_counts(analysis.enrichment.get("cron_suspected_sources"), "  suspected cron sources", "source"))
+    lines.append(
+        "  action scheduler: "
+        f"detected={analysis.enrichment.get('action_scheduler_detected')} "
+        f"pending={analysis.enrichment.get('action_scheduler_pending')} "
+        f"failed={analysis.enrichment.get('action_scheduler_failed')} "
+        f"old_pending={analysis.enrichment.get('action_scheduler_old_pending')}"
+    )
+    lines.extend(
+        format_named_counts(analysis.enrichment.get("action_scheduler_top_hooks"), "  action scheduler top hooks", "hook")
+    )
     lines.append("Backend error signals:")
     lines.extend(format_pairs(analysis.error_summary.get("top_signatures"), "  top signatures"))
     lines.extend(format_pairs(analysis.error_summary.get("top_files"), "  top files"))
@@ -188,6 +206,15 @@ def format_pairs(pairs, label: str) -> list[str]:
     lines = [f"{label}:"]
     for key, value in pairs[:10]:
         lines.append(f"    {key}: {value}")
+    return lines
+
+
+def format_named_counts(items, label: str, name_key: str) -> list[str]:
+    if not items:
+        return [f"{label}: none"]
+    lines = [f"{label}:"]
+    for item in items[:10]:
+        lines.append(f"    {item.get(name_key)}: {item.get('count')}")
     return lines
 
 
@@ -338,6 +365,16 @@ def build_json_payload(report: AnalysisReport, include_debug: bool = False) -> d
             "php_fpm_process_count": report.snapshot.php_fpm_process_count,
             "top_cpu_processes": report.snapshot.top_cpu_processes,
             "top_memory_processes": report.snapshot.top_memory_processes,
+            "redis_detected": report.snapshot.redis_detected,
+            "redis_reachable": report.snapshot.redis_reachable,
+            "redis_used_memory_human": report.snapshot.redis_used_memory_human,
+            "redis_used_memory_peak_human": report.snapshot.redis_used_memory_peak_human,
+            "redis_connected_clients": report.snapshot.redis_connected_clients,
+            "redis_keyspace_hits": report.snapshot.redis_keyspace_hits,
+            "redis_keyspace_misses": report.snapshot.redis_keyspace_misses,
+            "redis_evicted_keys": report.snapshot.redis_evicted_keys,
+            "redis_uptime_in_seconds": report.snapshot.redis_uptime_in_seconds,
+            "redis_status": report.snapshot.redis_status,
         },
         "ranked_apps": ranked_apps_payload,
         "top_suspect_apps": top_suspects_payload,
@@ -374,6 +411,9 @@ def build_app_detail_payload(report: AnalysisReport, analysis: AppAnalysis, incl
     italian_labels = translate_labels(analysis.categories)
     actions = build_immediate_actions(italian_labels)
     bot_requests = analysis.backend_summary.get("bot_requests", 0) + analysis.static_summary.get("bot_requests", 0)
+    cron_diagnostics = build_cron_diagnostics(analysis)
+    action_scheduler_diagnostics = build_action_scheduler_diagnostics(analysis)
+    slowlog_diagnostics = build_slowlog_diagnostics(analysis)
     payload = {
         "app_id": analysis.ranked_app.app.app_id,
         "display_name": analysis.ranked_app.blogname or analysis.ranked_app.home_url or analysis.ranked_app.app.app_id,
@@ -399,6 +439,9 @@ def build_app_detail_payload(report: AnalysisReport, analysis: AppAnalysis, incl
             "top_backend_error_file": first_pair_value(analysis.error_summary.get("top_files", [])),
             "top_cron_event": first_pair_value(analysis.cron_summary.get("top_events", [])),
         },
+        **cron_diagnostics,
+        **action_scheduler_diagnostics,
+        **slowlog_diagnostics,
     }
     if include_debug:
         payload["debug"] = {
@@ -422,6 +465,8 @@ def build_app_detail_payload(report: AnalysisReport, analysis: AppAnalysis, incl
                 "costly_samples": analysis.php_summary.get("costly_samples", []),
             },
             "php_slow": {
+                "top_plugin_paths": build_pair_objects(analysis.php_slow_summary.get("top_plugin_paths", []), "path"),
+                "entrypoint_signals": build_pair_objects(analysis.php_slow_summary.get("entrypoint_signals", []), "signal"),
                 "top_slow_signatures": build_pair_objects(analysis.php_slow_summary.get("top_slow_signatures", []), "signature"),
                 "top_slow_plugin_combinations": build_pair_objects(
                     analysis.php_slow_summary.get("top_slow_plugin_combinations", []),
@@ -432,6 +477,18 @@ def build_app_detail_payload(report: AnalysisReport, analysis: AppAnalysis, incl
             },
             "wp_cron": {
                 "tracked_marker_hits": build_pair_objects(analysis.cron_summary.get("tracked_marker_hits", []), "marker"),
+                "cron_top_hooks": analysis.enrichment.get("cron_top_hooks", []),
+                "cron_suspected_sources": analysis.enrichment.get("cron_suspected_sources", []),
+                "cron_due_now": analysis.enrichment.get("cron_due_now"),
+                "cron_unique_hooks": analysis.enrichment.get("cron_unique_hooks"),
+                "cron_total_events": analysis.enrichment.get("cron_total_events"),
+            },
+            "action_scheduler": {
+                "detected": analysis.enrichment.get("action_scheduler_detected"),
+                "pending": analysis.enrichment.get("action_scheduler_pending"),
+                "failed": analysis.enrichment.get("action_scheduler_failed"),
+                "old_pending": analysis.enrichment.get("action_scheduler_old_pending"),
+                "top_hooks": analysis.enrichment.get("action_scheduler_top_hooks", []),
             },
             "backend_errors": {
                 "top_signatures": build_pair_objects(analysis.error_summary.get("top_signatures", []), "signature"),
@@ -465,3 +522,29 @@ def first_pair_value(pairs: list[tuple]):
         return None
     key, count = pairs[0]
     return {"value": key, "count": count}
+
+
+def build_cron_diagnostics(analysis: AppAnalysis) -> dict:
+    return {
+        "cron_top_hooks": analysis.enrichment.get("cron_top_hooks", []),
+        "cron_signal_strength": analysis.enrichment.get("cron_signal_strength"),
+        "cron_suspected_sources": analysis.enrichment.get("cron_suspected_sources", []),
+    }
+
+
+def build_action_scheduler_diagnostics(analysis: AppAnalysis) -> dict:
+    return {
+        "action_scheduler_detected": analysis.enrichment.get("action_scheduler_detected", False),
+        "action_scheduler_pending": analysis.enrichment.get("action_scheduler_pending", 0),
+        "action_scheduler_failed": analysis.enrichment.get("action_scheduler_failed", 0),
+        "action_scheduler_old_pending": analysis.enrichment.get("action_scheduler_old_pending", 0),
+        "action_scheduler_top_hooks": analysis.enrichment.get("action_scheduler_top_hooks", []),
+    }
+
+
+def build_slowlog_diagnostics(analysis: AppAnalysis) -> dict:
+    return {
+        "slowlog_top_paths": build_pair_objects(analysis.php_slow_summary.get("top_slow_paths", []), "path"),
+        "slowlog_suspected_plugins": build_pair_objects(analysis.php_slow_summary.get("top_slow_plugins", []), "plugin"),
+        "slowlog_entrypoint_signals": build_pair_objects(analysis.php_slow_summary.get("entrypoint_signals", []), "signal"),
+    }

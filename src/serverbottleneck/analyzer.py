@@ -348,9 +348,11 @@ def analyze_wp_cron(app: AppPaths) -> dict:
 def analyze_php_slow(app: AppPaths, start: datetime, end: datetime) -> dict:
     slow_plugins = Counter()
     slow_paths = Counter()
+    plugin_paths = Counter()
     slow_signatures = Counter()
     plugin_combinations = Counter()
     category_hits = Counter()
+    entrypoint_signals = Counter()
     sample_events = []
     event_count = 0
 
@@ -362,8 +364,12 @@ def analyze_php_slow(app: AppPaths, start: datetime, end: datetime) -> dict:
             event_count += 1
             if event.script_filename:
                 slow_paths[event.script_filename] += 1
+                for signal in detect_slowlog_entrypoint_signals(event.script_filename):
+                    entrypoint_signals[signal] += 1
             for slug in event.plugin_slugs:
                 slow_plugins[slug] += 1
+            for plugin_path in event.plugin_paths:
+                plugin_paths[plugin_path] += 1
             if event.plugin_slugs:
                 plugin_combinations[",".join(event.plugin_slugs)] += 1
             slow_signatures[event.signature] += 1
@@ -386,9 +392,11 @@ def analyze_php_slow(app: AppPaths, start: datetime, end: datetime) -> dict:
         "slow_event_count": event_count,
         "top_slow_plugins": slow_plugins.most_common(10),
         "top_slow_paths": slow_paths.most_common(10),
+        "top_plugin_paths": plugin_paths.most_common(10),
         "top_slow_signatures": slow_signatures.most_common(10),
         "top_slow_plugin_combinations": plugin_combinations.most_common(10),
         "functional_categories": category_hits.most_common(),
+        "entrypoint_signals": entrypoint_signals.most_common(),
         "sample_events": sample_events[:10],
     }
 
@@ -613,6 +621,20 @@ def percentile(values: list[float], pct: int) -> float | None:
     ordered = sorted(values)
     index = int(round((pct / 100) * (len(ordered) - 1)))
     return round(ordered[index], 3)
+
+
+def detect_slowlog_entrypoint_signals(path: str) -> list[str]:
+    lowered = path.lower()
+    signals: list[str] = []
+    if "wp-cron.php" in lowered:
+        signals.append("wp-cron.php")
+    if "admin-ajax.php" in lowered:
+        signals.append("admin-ajax.php")
+    if "/wp-json/" in lowered or "rest_route=" in lowered:
+        signals.append("REST API")
+    if "/wp-content/plugins/" in lowered:
+        signals.append("plugin-path")
+    return signals
 
 
 def read_lines(path: Path):

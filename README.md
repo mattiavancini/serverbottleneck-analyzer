@@ -77,7 +77,29 @@ Campi top-level principali:
 - `app_details`
 - `final_warnings`
 
+Estensioni additive del payload:
+
+- `server_snapshot.redis_*`
+- `server_snapshot.redis_status`
+- `app_details[].cron_top_hooks`
+- `app_details[].cron_signal_strength`
+- `app_details[].cron_suspected_sources`
+- `app_details[].action_scheduler_detected`
+- `app_details[].action_scheduler_pending`
+- `app_details[].action_scheduler_failed`
+- `app_details[].action_scheduler_old_pending`
+- `app_details[].action_scheduler_top_hooks`
+- `app_details[].slowlog_top_paths`
+- `app_details[].slowlog_suspected_plugins`
+- `app_details[].slowlog_entrypoint_signals`
+
 Con `--debug-json` viene aggiunta la sezione opzionale `debug` con dettagli piu verbosi e investigativi.
+
+Le nuove sezioni diagnostiche sono best effort:
+
+- vengono raccolte solo per le top suspect apps gia selezionate
+- non influenzano `suspicion_score`
+- se `wp-cli`, DB o Redis non sono accessibili, i campi restano vuoti/default senza far fallire il collector
 
 ## ranked_apps vs top_suspect_apps
 
