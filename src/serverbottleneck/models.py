@@ -10,6 +10,7 @@ class ServerSnapshot:
     timestamp: datetime
     source: str
     load_averages: tuple[float, float, float]
+    cpu_count: int | None
     ram_total_mb: float | None
     ram_used_mb: float | None
     ram_available_mb: float | None

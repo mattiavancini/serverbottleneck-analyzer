@@ -86,6 +86,7 @@ def render_text(report: AnalysisReport) -> str:
         lines.append("WP/CLI process presence:")
         lines.append("  fixture-mode skipped")
     else:
+        lines.append(f"CPU cores: {fmt(snapshot.cpu_count)}")
         lines.append(f"Load average: {snapshot.load_averages[0]:.2f} {snapshot.load_averages[1]:.2f} {snapshot.load_averages[2]:.2f}")
         lines.append(
             f"RAM MB total/used/available: {fmt(snapshot.ram_total_mb)} / {fmt(snapshot.ram_used_mb)} / {fmt(snapshot.ram_available_mb)}"
@@ -374,6 +375,7 @@ def build_json_payload(report: AnalysisReport, include_debug: bool = False) -> d
             "timestamp_utc": isoformat_utc(report.snapshot.timestamp),
             "source": report.snapshot.source,
             "load_averages": list(report.snapshot.load_averages),
+            "cpu_count": report.snapshot.cpu_count,
             "ram_total_mb": report.snapshot.ram_total_mb,
             "ram_used_mb": report.snapshot.ram_used_mb,
             "ram_available_mb": report.snapshot.ram_available_mb,

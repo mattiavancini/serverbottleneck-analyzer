@@ -596,7 +596,12 @@ def analysis_sort_key(analysis: AppAnalysis) -> tuple:
 def build_actionable_warnings(analyses: list[AppAnalysis], snapshot) -> list[str]:
     warnings: list[str] = []
     if snapshot.load_averages[0] >= 4.0:
-        warnings.append(f"Load average is elevated at {snapshot.load_averages[0]:.2f}.")
+        cpu_count = snapshot.cpu_count or 1
+        load_per_core = snapshot.load_averages[0] / cpu_count
+        warnings.append(
+            f"Load average is elevated at {snapshot.load_averages[0]:.2f} "
+            f"(CPU cores={cpu_count}, load/core={load_per_core:.2f}; scale: ~1.00/core busy, >1.50/core high)."
+        )
     if snapshot.swap_used_mb and snapshot.swap_used_mb > 128:
         warnings.append(f"Swap usage is non-trivial at {snapshot.swap_used_mb:.1f} MB.")
     for analysis in analyses:

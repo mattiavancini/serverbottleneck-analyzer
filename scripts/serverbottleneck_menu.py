@@ -98,6 +98,13 @@ def print_dashboard(data_dir: Path, server: str, hours: int) -> None:
     latest_inspection = inspections[-1] if inspections else {}
     disk = latest_storage.get("server_disk") or {}
     growth_label, growth_value = storage_growth_label(latest_storage)
+    snapshot = latest_inspection.get("server_snapshot") if isinstance(latest_inspection.get("server_snapshot"), dict) else {}
+    cpu_count = as_float(snapshot.get("cpu_count")) or as_float(os.cpu_count()) or 1.0
+    latest_load = first_load(latest_inspection)
+    latest_ram_used = as_float(snapshot.get("ram_used_mb"))
+    latest_ram_total = as_float(snapshot.get("ram_total_mb"))
+    latest_swap_used = as_float(snapshot.get("swap_used_mb"))
+    latest_swap_total = as_float(snapshot.get("swap_total_mb"))
     load_values = [first_load(item) for item in selected_inspections]
     ram_values = [nested(item, "server_snapshot", "ram_used_mb") for item in selected_inspections]
     disk_values = [nested(item, "server_disk", "used_pct") for item in selected_storage]
@@ -110,14 +117,27 @@ def print_dashboard(data_dir: Path, server: str, hours: int) -> None:
     print(f"Ultimo performance snapshot: {latest_inspection.get('generated_at_utc', 'n/a')}")
     print("")
     print("SERVER STATUS")
+    print(f"CPU cores:      {int(cpu_count)}")
     print(
         f"Disk used:      {bytes_to_gb(disk.get('used_bytes'))} GB / {bytes_to_gb(disk.get('total_bytes'))} GB"
-        f"   used={fmt(disk.get('used_pct'))}%"
+        f"   {bar(as_float(disk.get('used_pct')), 100)} {fmt(disk.get('used_pct'))}%"
     )
     print(f"Disk free:      {bytes_to_gb(disk.get('free_bytes'))} GB")
     print(f"Disk growth:    {fmt(growth_value)} MB / {growth_label}")
-    print(f"Load avg:       {avg(load_values)} avg / {peak(load_values)} peak")
-    print(f"RAM used:       {avg(ram_values)} MB avg / {peak(ram_values)} MB peak")
+    print(
+        f"Load avg:       {avg(load_values)} avg / {peak(load_values)} peak   "
+        f"{load_bar(latest_load, cpu_count)} {load_status(latest_load, cpu_count)}"
+    )
+    print("                 scale: 1.00/core = CPU slots busy; >1.50/core = high queue")
+    print(
+        f"RAM used:       {avg(ram_values)} MB avg / {peak(ram_values)} MB peak   "
+        f"{bar(percent(latest_ram_used, latest_ram_total), 100)} {fmt_pct(percent(latest_ram_used, latest_ram_total))}"
+    )
+    if latest_swap_total and latest_swap_total > 0:
+        print(
+            f"Swap used:      {fmt(latest_swap_used)} MB / {fmt(latest_swap_total)} MB   "
+            f"{bar(percent(latest_swap_used, latest_swap_total), 100)} {fmt_pct(percent(latest_swap_used, latest_swap_total))}"
+        )
     print(f"PHP-FPM proc:   {avg(php_fpm_values)} avg / {peak(php_fpm_values)} peak")
     print(f"Redis:          {nested(latest_inspection, 'server_snapshot', 'redis_status') or 'n/a'}")
     print("")
@@ -324,6 +344,44 @@ def sparkline(values: list[Any]) -> str:
         index = int(round(((value - low) / (high - low)) * (len(BLOCKS) - 1)))
         output.append(BLOCKS[index])
     return "".join(output)
+
+
+def bar(value: float | None, maximum: float, width: int = 18) -> str:
+    if value is None or maximum <= 0:
+        return "[" + "-" * width + "]"
+    ratio = max(0.0, min(float(value) / maximum, 1.0))
+    filled = int(round(ratio * width))
+    return "[" + "#" * filled + "-" * (width - filled) + "]"
+
+
+def load_bar(load_value: float | None, cpu_count: float, width: int = 18) -> str:
+    if load_value is None or cpu_count <= 0:
+        return "[" + "-" * width + "]"
+    # Full bar at 2.0 load per core so the display still shows overload headroom.
+    return bar(load_value / cpu_count, 2.0, width=width)
+
+
+def load_status(load_value: float | None, cpu_count: float) -> str:
+    if load_value is None or cpu_count <= 0:
+        return "n/a"
+    ratio = load_value / cpu_count
+    if ratio < 0.7:
+        return f"OK ({ratio:.2f}/core)"
+    if ratio < 1.0:
+        return f"BUSY ({ratio:.2f}/core)"
+    if ratio < 1.5:
+        return f"HIGH ({ratio:.2f}/core)"
+    return f"CRITICAL ({ratio:.2f}/core)"
+
+
+def percent(value: float | None, total: float | None) -> float | None:
+    if value is None or total is None or total <= 0:
+        return None
+    return round((value / total) * 100, 2)
+
+
+def fmt_pct(value: float | None) -> str:
+    return "n/a%" if value is None else f"{value}%"
 
 
 def avg(values: list[Any]) -> str:

@@ -2,4 +2,18 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec python3 "$SCRIPT_DIR/serverbottleneck_menu.py" "$@"
+DATA_DIR="$SCRIPT_DIR/../data"
+
+has_data_dir=0
+for arg in "$@"; do
+  if [[ "$arg" == "--data-dir" || "$arg" == --data-dir=* ]]; then
+    has_data_dir=1
+    break
+  fi
+done
+
+if [[ "$has_data_dir" -eq 1 ]]; then
+  exec python3 "$SCRIPT_DIR/serverbottleneck_menu.py" "$@"
+else
+  exec python3 "$SCRIPT_DIR/serverbottleneck_menu.py" --data-dir "$DATA_DIR" "$@"
+fi

@@ -223,6 +223,19 @@ python3 scripts/serverbottleneck_menu.py --data-dir ../data --server wp-x
 
 Il menu SSH mostra status server, trend testuali e crescita storage locale. Il collector resta non interattivo.
 
+Per installare il comando corto locale:
+
+```bash
+./scripts/install_sba_link.sh
+sba --server WP_Q
+```
+
+Il dashboard usa barre testuali per disco/RAM/swap e normalizza il load average sui core CPU:
+
+- `~1.00/core`: i core sono occupati
+- `>1.50/core`: coda alta, server sotto pressione
+- `>2.00/core`: overload forte
+
 ## Limiti noti
 
 - niente accesso ai log globali di sistema
