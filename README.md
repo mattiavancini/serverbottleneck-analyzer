@@ -49,6 +49,9 @@ Con `--output-dir` il tool salva sempre:
 - report testuale: `inspection-<UTC>.txt`
 - payload JSON standard: `inspection-<UTC>.json`
 - CSV sintetico per app analizzata: `inspection-<UTC>.csv`
+- snapshot storage: `storage-<UTC>.json`
+- report storage umano: `storage-<UTC>.txt`
+- CSV crescita storage: `storage-growth-<UTC>.csv`
 
 Struttura:
 
@@ -56,6 +59,9 @@ Struttura:
 reports/<server_name>/<YYYY-MM-DD>/inspection-<UTC_TIMESTAMP>.txt
 reports/<server_name>/<YYYY-MM-DD>/inspection-<UTC_TIMESTAMP>.json
 reports/<server_name>/<YYYY-MM-DD>/inspection-<UTC_TIMESTAMP>.csv
+reports/<server_name>/<YYYY-MM-DD>/storage-<UTC_TIMESTAMP>.json
+reports/<server_name>/<YYYY-MM-DD>/storage-<UTC_TIMESTAMP>.txt
+reports/<server_name>/<YYYY-MM-DD>/storage-growth-<UTC_TIMESTAMP>.csv
 ```
 
 ## JSON standard
@@ -189,8 +195,33 @@ Flag principali:
 - `--output-dir`
 - `--server-name`
 - `--debug-json`
+- `--skip-storage`
 - `--json-out`
 - `--csv-out`
+
+## Storage / disk growth
+
+La pipeline storage e separata dal ranking performance. Ogni run con `--output-dir` produce uno snapshot storage stabile con contratto:
+
+```text
+serverbottleneck.storage.v1
+```
+
+Obiettivo:
+
+- capire quale app cresce
+- distinguere bucket principali: `logs`, `cache`, `uploads`, `wpallimport`, `local_backups`, `tmp`, `debug_log`
+- confrontare snapshot precedente e baseline 24h quando disponibili
+- produrre top sospetti leggibili senza salvare log grezzi
+
+Consultazione rapida:
+
+```bash
+python3 scripts/summarize_storage.py --data-dir ../data --server wp-x --hours 24
+python3 scripts/serverbottleneck_menu.py --data-dir ../data --server wp-x
+```
+
+Il menu SSH mostra status server, trend testuali e crescita storage locale. Il collector resta non interattivo.
 
 ## Limiti noti
 

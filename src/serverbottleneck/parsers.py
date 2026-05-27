@@ -21,7 +21,12 @@ CRON_EVENT_RE = re.compile(
 CRON_RUN_RE = re.compile(r"^(?P<weekday>\w{3}) (?P<day>\d{1,2}) (?P<mon>\w{3}) (?P<year>\d{4}) (?P<time>.+?) UTC ")
 CRON_TOTAL_RE = re.compile(r"^Success: Executed a total of (?P<count>\d+) cron events\.$")
 
-ERROR_SIG_RE = re.compile(r"PHP (?P<severity>\w+): (?P<message>.+)")
+ERROR_SIG_RE = re.compile(
+    r"\bPHP\s+(?P<severity>Recoverable fatal error|Fatal error|Parse error|Compile error|Core warning|Warning|Notice|Deprecated|Error)\s*:\s*(?P<message>.+)",
+    re.IGNORECASE,
+)
+ERROR_BRACKET_TS_RE = re.compile(r"^\[(?P<ts>[^\]]+)\]")
+ERROR_NGINX_TS_RE = re.compile(r"^(?P<ts>\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})")
 FILE_HINT_RE = re.compile(r"(/[^\s:]+(?:\.php|\.inc))")
 SLOW_HEADER_RE = re.compile(
     r"^\[(?P<ts>\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}:\d{2})\]\s+\[pool (?P<pool>[^\]]+)\] pid (?P<pid>\d+)$"
@@ -141,18 +146,19 @@ def parse_error_line(line: str) -> ErrorRecord | None:
     stripped = line.strip()
     if not stripped:
         return None
+    timestamp = parse_error_timestamp(stripped)
     severity = None
     signature = stripped
     message = stripped
     error_match = ERROR_SIG_RE.search(stripped)
     if error_match:
-        severity = error_match.group("severity")
+        severity = normalize_error_severity(error_match.group("severity"))
         message = error_match.group("message")
         signature = normalize_error_signature(message)
     file_hint_match = FILE_HINT_RE.search(stripped)
     file_hint = file_hint_match.group(1) if file_hint_match else None
     return ErrorRecord(
-        timestamp=None,
+        timestamp=timestamp,
         severity=severity,
         signature=signature,
         file_hint=file_hint,
@@ -226,6 +232,57 @@ def normalize_error_signature(message: str) -> str:
     normalized = re.sub(r'"[^"]+"', '"<str>"', normalized)
     normalized = re.sub(r"'[^']+'", "'<str>'", normalized)
     return normalized.strip()
+
+
+def normalize_error_severity(value: str) -> str:
+    normalized = " ".join(value.lower().split())
+    return {
+        "warning": "Warning",
+        "notice": "Notice",
+        "deprecated": "Deprecated",
+        "fatal error": "Fatal error",
+        "parse error": "Parse error",
+        "recoverable fatal error": "Recoverable fatal error",
+        "compile error": "Compile error",
+        "core warning": "Core warning",
+        "error": "Error",
+    }.get(normalized, value.strip())
+
+
+def parse_error_timestamp(line: str) -> datetime | None:
+    candidates: list[str] = []
+    bracket_match = ERROR_BRACKET_TS_RE.match(line)
+    if bracket_match:
+        candidates.append(bracket_match.group("ts").strip())
+    nginx_match = ERROR_NGINX_TS_RE.match(line)
+    if nginx_match:
+        candidates.append(nginx_match.group("ts").strip())
+
+    for candidate in candidates:
+        parsed = _parse_error_timestamp_candidate(candidate)
+        if parsed:
+            return parsed
+    return None
+
+
+def _parse_error_timestamp_candidate(value: str) -> datetime | None:
+    formats = (
+        "%d-%b-%Y %H:%M:%S %Z",
+        "%d-%b-%Y %H:%M:%S",
+        "%d/%b/%Y:%H:%M:%S %z",
+        "%Y/%m/%d %H:%M:%S",
+        "%a %b %d %H:%M:%S.%f %Y",
+        "%a %b %d %H:%M:%S %Y",
+    )
+    for fmt in formats:
+        try:
+            parsed = datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    return None
 
 
 def is_bot_user_agent(user_agent: str | None) -> bool:

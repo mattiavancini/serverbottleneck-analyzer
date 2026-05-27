@@ -116,7 +116,7 @@ def analyze_app(
     php_summary = analyze_php_access(app, start, end)
     php_slow_summary = analyze_php_slow(app, start, end)
     cron_summary = analyze_wp_cron(app)
-    error_summary = analyze_backend_errors(app)
+    error_summary = analyze_backend_errors(app, start, end)
     enrichment = fixture_wp_enrichment() if fixture_mode or not include_enrichment else collect_wp_enrichment(app.app_root)
     categories = classify_app(backend_summary, static_summary, php_summary, php_slow_summary, cron_summary)
     categories = add_error_heavy_label(categories, error_summary)
@@ -169,6 +169,7 @@ def analyze_backend(app: AppPaths, start: datetime, end: datetime) -> dict:
     sensitive = Counter()
     internal_requests = 0
     bot_requests = 0
+    backend_5xx_count = 0
     total = 0
     for path in app.backend_access_logs:
         for line in read_lines(path):
@@ -180,6 +181,8 @@ def analyze_backend(app: AppPaths, start: datetime, end: datetime) -> dict:
             ips[record.ip] += 1
             ip_paths[(record.ip, record.path)] += 1
             statuses[record.status] += 1
+            if 500 <= record.status <= 599:
+                backend_5xx_count += 1
             if is_internal_ip(record.ip):
                 internal_requests += 1
             if is_bot_user_agent(record.user_agent):
@@ -198,6 +201,7 @@ def analyze_backend(app: AppPaths, start: datetime, end: datetime) -> dict:
         "top_ip_share_pct": top_ip_share,
         "internal_requests": internal_requests,
         "bot_requests": bot_requests,
+        "backend_5xx_count": backend_5xx_count,
     }
 
 
@@ -235,11 +239,14 @@ def analyze_php_access(app: AppPaths, start: datetime, end: datetime) -> dict:
     costly_samples = []
     durations = []
     memories = []
+    php_5xx_count = 0
     for path in app.php_access_logs:
         for line in read_lines(path):
             record = parse_php_app_access(line)
             if not record or not (start <= record.timestamp < end):
                 continue
+            if 500 <= record.status <= 599:
+                php_5xx_count += 1
             final_target = record.final_request_target or record.script_target
             targets[final_target] += 1
             if record.duration_sec is not None:
@@ -268,6 +275,7 @@ def analyze_php_access(app: AppPaths, start: datetime, end: datetime) -> dict:
         "p95_latency_sec": percentile(durations, 95),
         "avg_memory_mb": round((sum(memories) / len(memories)) / (1024 * 1024), 2) if memories else None,
         "costly_request_count": len(costly_samples),
+        "php_5xx_count": php_5xx_count,
         "expensive_samples": [
             {
                 "timestamp": sample.timestamp.isoformat(),
@@ -401,16 +409,27 @@ def analyze_php_slow(app: AppPaths, start: datetime, end: datetime) -> dict:
     }
 
 
-def analyze_backend_errors(app: AppPaths) -> dict:
+def analyze_backend_errors(app: AppPaths, start: datetime, end: datetime) -> dict:
     signatures = Counter()
     files = Counter()
     severities = Counter()
     total = 0
+    timestamped_events = 0
+    untimestamped_events = 0
+    skipped_out_of_window = 0
     for path in app.backend_error_logs:
         for line in read_lines(path):
             record = parse_error_line(line)
             if not record:
                 continue
+            if record.timestamp is not None:
+                if not (start <= record.timestamp < end):
+                    skipped_out_of_window += 1
+                    continue
+                timestamped_events += 1
+            else:
+                # Legacy backend lines often have no parseable timestamp; keep them visible but track the limitation.
+                untimestamped_events += 1
             total += 1
             signatures[record.signature] += 1
             if record.file_hint:
@@ -419,6 +438,9 @@ def analyze_backend_errors(app: AppPaths) -> dict:
                 severities[record.severity] += 1
     return {
         "total_events": total,
+        "timestamped_events": timestamped_events,
+        "untimestamped_events": untimestamped_events,
+        "skipped_out_of_window": skipped_out_of_window,
         "top_signatures": signatures.most_common(10),
         "top_files": files.most_common(10),
         "top_severities": severities.most_common(),

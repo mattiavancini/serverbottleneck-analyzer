@@ -29,7 +29,23 @@ def discover_applications(root: Path | None = None) -> list[AppPaths]:
             php_access_logs=sorted(log_dir.glob("php-app.access.log")),
             php_slow_logs=sorted(log_dir.glob("php-app.slow.log*")),
             wp_cron_logs=sorted(log_dir.glob("wp-cron.log")),
-            backend_error_logs=sorted(log_dir.glob("backend_wordpress*.error.log")),
+            backend_error_logs=discover_error_logs(app_root, log_dir),
         )
         apps.append(app)
     return apps
+
+
+def discover_error_logs(app_root: Path, log_dir: Path) -> list[Path]:
+    paths: set[Path] = set()
+    for pattern in (
+        "backend_wordpress*.error.log*",
+        "php-error.log*",
+        "php-app.error.log*",
+    ):
+        paths.update(log_dir.glob(pattern))
+
+    debug_log = app_root / "public_html" / "wp-content" / "debug.log"
+    if debug_log.is_file():
+        paths.add(debug_log)
+
+    return sorted(paths)

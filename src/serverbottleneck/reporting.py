@@ -140,6 +140,7 @@ def render_app_analysis(analysis: AppAnalysis) -> list[str]:
     lines.append(f"  top ip share: {analysis.backend_summary.get('top_ip_share_pct', 0)}%")
     lines.append(f"  internal requests: {analysis.backend_summary.get('internal_requests', 0)}")
     lines.append(f"  bot requests: {analysis.backend_summary.get('bot_requests', 0)}")
+    lines.append(f"  backend 5xx count: {analysis.backend_summary.get('backend_5xx_count', 0)}")
     lines.append("Static log signals:")
     lines.extend(format_pairs(analysis.static_summary.get("top_suspicious_paths"), "  suspicious paths"))
     lines.extend(format_pairs(analysis.static_summary.get("top_assets"), "  heavy assets"))
@@ -151,6 +152,7 @@ def render_app_analysis(analysis: AppAnalysis) -> list[str]:
     lines.append(f"  p95 latency sec: {analysis.php_summary.get('p95_latency_sec')}")
     lines.append(f"  avg memory mb: {analysis.php_summary.get('avg_memory_mb')}")
     lines.append(f"  costly request count: {analysis.php_summary.get('costly_request_count', 0)}")
+    lines.append(f"  PHP 5xx count: {analysis.php_summary.get('php_5xx_count', 0)}")
     for sample in analysis.php_summary.get("expensive_samples", [])[:5]:
         lines.append(
             f"  expensive sample: target={sample['target']} status={sample['status']} duration={sample['duration_sec']} memory_mb={sample['memory_mb']}"
@@ -185,6 +187,13 @@ def render_app_analysis(analysis: AppAnalysis) -> list[str]:
         format_named_counts(analysis.enrichment.get("action_scheduler_top_hooks"), "  action scheduler top hooks", "hook")
     )
     lines.append("Backend error signals:")
+    lines.append(f"  total events: {analysis.error_summary.get('total_events', 0)}")
+    lines.append(f"  timestamped events: {analysis.error_summary.get('timestamped_events', 0)}")
+    lines.append(f"  untimestamped events included: {analysis.error_summary.get('untimestamped_events', 0)}")
+    lines.append(f"  skipped out of window: {analysis.error_summary.get('skipped_out_of_window', 0)}")
+    if analysis.error_summary.get("untimestamped_events", 0):
+        lines.append("  note: untimestamped error lines are included because they cannot be safely time-filtered.")
+    lines.extend(format_pairs(analysis.error_summary.get("top_severities"), "  top severities"))
     lines.extend(format_pairs(analysis.error_summary.get("top_signatures"), "  top signatures"))
     lines.extend(format_pairs(analysis.error_summary.get("top_files"), "  top files"))
     lines.append("Enrichment:")
@@ -271,6 +280,10 @@ def export_csv(report: AnalysisReport, path: Path) -> None:
                 "top_ip_share",
                 "labels_it",
                 "main_action_it",
+                "backend_error_untimestamped_count",
+                "backend_error_skipped_out_of_window",
+                "backend_5xx_count",
+                "php_5xx_count",
             ]
         )
         for analysis in report.app_analyses:
@@ -320,6 +333,10 @@ def build_csv_row(report: AnalysisReport, analysis: AppAnalysis) -> list:
         analysis.backend_summary.get("top_ip_share_pct", 0),
         "|".join(italian_labels),
         actions[0] if actions else "",
+        analysis.error_summary.get("untimestamped_events", 0),
+        analysis.error_summary.get("skipped_out_of_window", 0),
+        analysis.backend_summary.get("backend_5xx_count", 0),
+        analysis.php_summary.get("php_5xx_count", 0),
     ]
 
 
@@ -402,6 +419,8 @@ def build_compact_app_summary(report: AnalysisReport, analysis: AppAnalysis) -> 
         "priority": analysis.priority,
         "suspicion_score": analysis.suspicion_score,
         "backend_requests": analysis.backend_summary.get("total_requests", 0),
+        "backend_5xx_count": analysis.backend_summary.get("backend_5xx_count", 0),
+        "php_5xx_count": analysis.php_summary.get("php_5xx_count", 0),
         "labels_it": italian_labels,
         "main_action_it": actions[0] if actions else None,
     }
@@ -426,6 +445,11 @@ def build_app_detail_payload(report: AnalysisReport, analysis: AppAnalysis, incl
             "top_ip_share_pct": analysis.backend_summary.get("top_ip_share_pct", 0),
             "bot_requests": bot_requests,
             "backend_error_count": analysis.error_summary.get("total_events", 0),
+            "backend_error_timestamped_count": analysis.error_summary.get("timestamped_events", 0),
+            "backend_error_untimestamped_count": analysis.error_summary.get("untimestamped_events", 0),
+            "backend_error_skipped_out_of_window": analysis.error_summary.get("skipped_out_of_window", 0),
+            "backend_5xx_count": analysis.backend_summary.get("backend_5xx_count", 0),
+            "php_5xx_count": analysis.php_summary.get("php_5xx_count", 0),
             "avg_latency_sec": analysis.php_summary.get("avg_latency_sec"),
             "p95_latency_sec": analysis.php_summary.get("p95_latency_sec"),
             "costly_request_count": analysis.php_summary.get("costly_request_count", 0),
@@ -453,6 +477,7 @@ def build_app_detail_payload(report: AnalysisReport, analysis: AppAnalysis, incl
                 "top_ips": build_pair_objects(analysis.backend_summary.get("top_ips", []), "ip"),
                 "top_status_codes": build_pair_objects(analysis.backend_summary.get("top_status_codes", []), "status_code"),
                 "sensitive_endpoints": build_pair_objects(analysis.backend_summary.get("sensitive_endpoints", []), "endpoint"),
+                "backend_5xx_count": analysis.backend_summary.get("backend_5xx_count", 0),
             },
             "static": {
                 "top_suspicious_paths": build_pair_objects(analysis.static_summary.get("top_suspicious_paths", []), "path"),
@@ -461,6 +486,7 @@ def build_app_detail_payload(report: AnalysisReport, analysis: AppAnalysis, incl
             "php_access": {
                 "latency_buckets": build_pair_objects(analysis.php_summary.get("latency_buckets", []), "bucket"),
                 "memory_buckets": build_pair_objects(analysis.php_summary.get("memory_buckets", []), "bucket"),
+                "php_5xx_count": analysis.php_summary.get("php_5xx_count", 0),
                 "expensive_samples": analysis.php_summary.get("expensive_samples", []),
                 "costly_samples": analysis.php_summary.get("costly_samples", []),
             },
@@ -491,6 +517,10 @@ def build_app_detail_payload(report: AnalysisReport, analysis: AppAnalysis, incl
                 "top_hooks": analysis.enrichment.get("action_scheduler_top_hooks", []),
             },
             "backend_errors": {
+                "total_events": analysis.error_summary.get("total_events", 0),
+                "timestamped_events": analysis.error_summary.get("timestamped_events", 0),
+                "untimestamped_events": analysis.error_summary.get("untimestamped_events", 0),
+                "skipped_out_of_window": analysis.error_summary.get("skipped_out_of_window", 0),
                 "top_signatures": build_pair_objects(analysis.error_summary.get("top_signatures", []), "signature"),
                 "top_files": build_pair_objects(analysis.error_summary.get("top_files", []), "file"),
                 "top_severities": build_pair_objects(analysis.error_summary.get("top_severities", []), "severity"),
