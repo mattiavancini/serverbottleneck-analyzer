@@ -132,6 +132,8 @@ Nota operativa: la profondita aggiuntiva compare pienamente solo dai nuovi snaps
 - aggiunti `scan_warnings` per rendere visibili scan incompleti o fallback non pienamente affidabili
 - se `du` fallisce e il fallback Python viene troncato, il collector mantiene la dimensione del precedente snapshot invece di sottostimare l'app
 - `APP SIZE TREE` marca con `!` le app con dimensione non pienamente affidabile nello snapshot corrente
+- `APP SIZE TREE` usa la dimensione massima osservata nella finestra per ordinare le app, cosi una app grande non sparisce se l'ultimo snapshot risulta molto piu basso
+- quando una app cala molto rispetto al massimo della finestra, viene mostrato anche `max`
 - ranking interni JSON aumentati a 100 righe, cosi le viste non perdono app importanti per limiti troppo bassi
 
 ## 2026-05-27 - Storage Growth Analyzer e dashboard SSH per WP_Q

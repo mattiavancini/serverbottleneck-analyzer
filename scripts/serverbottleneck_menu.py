@@ -158,7 +158,7 @@ def print_dashboard(data_dir: Path, server: str, hours: int) -> None:
     print_trend("RAM", ram_values)
     print_trend("Disk", disk_values)
     print("")
-    print_app_size_tree(latest_storage, server)
+    print_app_size_tree(selected_storage or [latest_storage], server)
     print("")
     print(title("TOP STORAGE GROWTH (dal primo snapshot della finestra)"))
     rows = window_growth_rows(selected_storage)
@@ -232,42 +232,68 @@ def print_growth_legend() -> None:
     print(intro("labels", "classificazione automatica del tipo di problema probabile"))
 
 
-def print_app_size_tree(latest_storage: dict[str, Any], server: str) -> None:
-    rows = app_size_rows(latest_storage)
+def print_app_size_tree(storage_window: list[dict[str, Any]], server: str) -> None:
+    rows = app_size_rows(storage_window)
     total_apps = len(rows)
     if not rows:
         print(title("APP SIZE TREE"))
         print("none")
         return
     shown = rows[:TOP_APP_SIZE_LIMIT]
-    root_size = sum(row["size_bytes"] for row in rows)
-    print(title(f"APP SIZE TREE (ultimo snapshot, top {len(shown)} di {total_apps} app per dimensione)"))
-    print(intro("Stai vedendo", "classifica delle app piu pesanti; il tree si ferma al nome app."))
+    root_size = sum(row["current_size_bytes"] for row in rows if row["present_latest"])
+    print(title(f"APP SIZE TREE (finestra dati, top {len(shown)} di {total_apps} app per dimensione osservata)"))
+    print(intro("Stai vedendo", "classifica delle app piu pesanti nella finestra; valore principale = ultimo snapshot."))
     if any(not row["reliable"] for row in shown):
         print(intro("Nota", "! = dimensione mantenuta/stimata per scan incompleto; verificare con il prossimo snapshot"))
+    if any(row["dropped_from_window_max"] or not row["present_latest"] for row in shown):
+        print(intro("Nota", "max = dimensione massima vista nella finestra; appare se l'ultimo snapshot e molto piu basso"))
     print(f"{server}/".ljust(58) + format_tree_size(root_size))
     for index, row in enumerate(shown):
         is_last = index == len(shown) - 1 and len(shown) == total_apps
         connector = "`-- " if is_last else "|-- "
         label = f"{connector}{row['app_id']}/"
         marker = " !" if not row["reliable"] else ""
-        print(label.ljust(58) + format_tree_size(row["size_bytes"]) + marker)
+        if not row["present_latest"]:
+            marker += " missing latest"
+        size_text = format_tree_size(row["current_size_bytes"])
+        if row["dropped_from_window_max"] or not row["present_latest"]:
+            size_text += f" (max {format_tree_size(row['max_size_bytes'])})"
+        print(label.ljust(58) + size_text + marker)
     if total_apps > len(shown):
         remaining = total_apps - len(shown)
-        remaining_size = sum(row["size_bytes"] for row in rows[len(shown) :])
+        remaining_size = sum(row["current_size_bytes"] for row in rows[len(shown) :] if row["present_latest"])
         print(f"`-- ... altre {remaining} app".ljust(58) + format_tree_size(remaining_size))
 
 
-def app_size_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
+def app_size_rows(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    latest = payloads[-1] if payloads else {}
+    latest_apps = apps_by_id(latest)
+    max_sizes: dict[str, int] = {}
+    for payload in payloads:
+        for app in payload.get("apps") or []:
+            app_id = str(app.get("app_id") or "")
+            if not app_id:
+                continue
+            size = int((app.get("sizes_bytes") or {}).get("total") or 0)
+            max_sizes[app_id] = max(max_sizes.get(app_id, 0), size)
     rows = []
-    for app in payload.get("apps") or []:
-        app_id = app.get("app_id")
-        size = int((app.get("sizes_bytes") or {}).get("total") or 0)
-        quality = ((app.get("size_quality") or {}).get("total") or {})
-        if not app_id:
-            continue
-        rows.append({"app_id": str(app_id), "size_bytes": size, "reliable": quality.get("reliable", True)})
-    rows.sort(key=lambda row: (-row["size_bytes"], row["app_id"]))
+    for app_id, max_size in max_sizes.items():
+        latest_app = latest_apps.get(app_id)
+        present_latest = latest_app is not None
+        current_size = int(((latest_app or {}).get("sizes_bytes") or {}).get("total") or 0)
+        quality = (((latest_app or {}).get("size_quality") or {}).get("total") or {})
+        dropped = max_size > 0 and current_size < max_size * 0.75 and (max_size - current_size) >= 512 * 1024 * 1024
+        rows.append(
+            {
+                "app_id": app_id,
+                "current_size_bytes": current_size,
+                "max_size_bytes": max_size,
+                "present_latest": present_latest,
+                "dropped_from_window_max": dropped,
+                "reliable": quality.get("reliable", True),
+            }
+        )
+    rows.sort(key=lambda row: (-max(row["current_size_bytes"], row["max_size_bytes"]), row["app_id"]))
     return rows
 
 
