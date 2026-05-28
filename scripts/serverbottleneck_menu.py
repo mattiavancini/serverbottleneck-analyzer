@@ -22,7 +22,6 @@ DEFAULT_WINDOW_HOURS = 168
 TOP_DASHBOARD_LIMIT = 15
 TOP_DETAIL_LIMIT = 30
 TOP_APP_FILES_LIMIT = 10
-TOP_APP_SIZE_LIMIT = 30
 TREND_WIDTH = 72
 TREE_CHILD_LIMIT = 8
 TREE_MAX_LINES = 90
@@ -195,7 +194,9 @@ def show_growth(data_dir: Path, server: str, hours: int) -> None:
     if not rows:
         print("none")
         return
-    print_growth_table(rows[:TOP_DETAIL_LIMIT])
+    print(intro("Righe", f"{len(rows)} app con crescita positiva nella finestra"))
+    print("")
+    print_growth_table(rows)
     print("")
     print_growth_legend()
 
@@ -239,17 +240,18 @@ def print_app_size_tree(storage_window: list[dict[str, Any]], server: str) -> No
         print(title("APP SIZE TREE"))
         print("none")
         return
-    shown = rows[:TOP_APP_SIZE_LIMIT]
     root_size = sum(row["current_size_bytes"] for row in rows if row["present_latest"])
-    print(title(f"APP SIZE TREE (finestra dati, top {len(shown)} di {total_apps} app per dimensione osservata)"))
-    print(intro("Stai vedendo", "classifica delle app piu pesanti nella finestra; valore principale = ultimo snapshot."))
-    if any(not row["reliable"] for row in shown):
+    latest_count = sum(1 for row in rows if row["present_latest"])
+    print(title(f"APP SIZE TREE (finestra dati, tutte le {total_apps} app osservate)"))
+    print(intro("Stai vedendo", "classifica completa delle app per dimensione; valore principale = ultimo snapshot."))
+    print(intro("Copertura", f"{latest_count} app nell'ultimo snapshot; {total_apps} app osservate nella finestra"))
+    if any(not row["reliable"] for row in rows):
         print(intro("Nota", "! = dimensione mantenuta/stimata per scan incompleto; verificare con il prossimo snapshot"))
-    if any(row["dropped_from_window_max"] or not row["present_latest"] for row in shown):
+    if any(row["dropped_from_window_max"] or not row["present_latest"] for row in rows):
         print(intro("Nota", "max = dimensione massima vista nella finestra; appare se l'ultimo snapshot e molto piu basso"))
     print(f"{server}/".ljust(58) + format_tree_size(root_size))
-    for index, row in enumerate(shown):
-        is_last = index == len(shown) - 1 and len(shown) == total_apps
+    for index, row in enumerate(rows):
+        is_last = index == len(rows) - 1
         connector = "`-- " if is_last else "|-- "
         label = f"{connector}{row['app_id']}/"
         marker = " !" if not row["reliable"] else ""
@@ -259,10 +261,6 @@ def print_app_size_tree(storage_window: list[dict[str, Any]], server: str) -> No
         if row["dropped_from_window_max"] or not row["present_latest"]:
             size_text += f" (max {format_tree_size(row['max_size_bytes'])})"
         print(label.ljust(58) + size_text + marker)
-    if total_apps > len(shown):
-        remaining = total_apps - len(shown)
-        remaining_size = sum(row["current_size_bytes"] for row in rows[len(shown) :] if row["present_latest"])
-        print(f"`-- ... altre {remaining} app".ljust(58) + format_tree_size(remaining_size))
 
 
 def app_size_rows(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:

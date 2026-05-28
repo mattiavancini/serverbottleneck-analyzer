@@ -136,6 +136,13 @@ Nota operativa: la profondita aggiuntiva compare pienamente solo dai nuovi snaps
 - quando una app cala molto rispetto al massimo della finestra, viene mostrato anche `max`
 - ranking interni JSON aumentati a 100 righe, cosi le viste non perdono app importanti per limiti troppo bassi
 
+### Report completo app
+
+- rimosso il limite top 30 da `APP SIZE TREE`: ora la dashboard mostra tutte le app osservate nella finestra
+- aggiunta riga `Copertura` con conteggio app nell'ultimo snapshot e nella finestra
+- rimosso il limite top 30 dalle schermate crescita menu 2/3/4: ora mostrano tutte le app con crescita positiva
+- la dashboard resta una sintesi per `TOP STORAGE GROWTH`, ma i dettagli non tagliano piu le app
+
 ## 2026-05-27 - Storage Growth Analyzer e dashboard SSH per WP_Q
 
 ### Contesto
