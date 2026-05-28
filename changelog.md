@@ -100,6 +100,13 @@ Nota operativa: la profondita aggiuntiva compare pienamente solo dai nuovi snaps
 - `Top directories` ora fonde directory raccolte e bucket noti dell'app, quindi mostra anche voci come `cache`, `uploads`, `wpallimport` e `local_backups`
 - il dettaglio app resta organizzato in tre blocchi: `Tree`, `Top directories`, `Top files`
 
+### Chiarezza schermate crescita app
+
+- le voci menu 2/3/4 mostrano ora il nome della schermata, per esempio `MENU 3 - APP CRESCIUTE - ULTIME 24 ORE`
+- aggiunto il confronto effettivo tra primo e ultimo snapshot usati
+- aggiunta legenda per `crescita`, `rate`, `bucket` e `labels`
+- sostituito output inline con tabella leggibile: `APP`, `CRESCITA`, `RATE`, `BUCKET`, `LABELS`
+
 ## 2026-05-27 - Storage Growth Analyzer e dashboard SSH per WP_Q
 
 ### Contesto

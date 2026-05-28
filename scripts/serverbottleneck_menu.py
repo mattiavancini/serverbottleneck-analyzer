@@ -165,13 +165,18 @@ def show_growth(data_dir: Path, server: str, hours: int) -> None:
     payloads = load_payloads(data_dir, server, "storage-*.json")
     selected = select_window(payloads, hours)
     clear_screen()
-    print(f"TOP STORAGE GROWTH - {server} - {hours}h")
+    print(f"{growth_menu_title(hours)} - {server}")
+    print("Stai vedendo la crescita storage per app: confronto tra primo e ultimo snapshot nella finestra richiesta.")
+    if len(selected) >= 2:
+        print(f"Confronto: {compact_dt(selected[0].get('generated_at_utc'))} -> {compact_dt(selected[-1].get('generated_at_utc'))}")
     label = observed_window_label(selected, hours)
     if label:
-        print(f"Finestra dati: {label}")
+        print(f"Finestra dati reale: {label}")
     disk_growth_mb = disk_growth_for_window(selected)
     if disk_growth_mb is not None:
         print(f"Disk growth osservato: {format_mb_or_gb(disk_growth_mb)}")
+    print("")
+    print("Legenda: crescita = aumento totale nella finestra; rate = media oraria; bucket = area cresciuta di piu; labels = classificazione automatica.")
     print("")
     rows = window_growth_rows(selected)
     if not rows and payloads:
@@ -179,12 +184,31 @@ def show_growth(data_dir: Path, server: str, hours: int) -> None:
         rows = (latest.get("rankings") or {}).get("top_growth_apps") or []
     if not rows:
         print("none")
-    for row in rows[:TOP_DETAIL_LIMIT]:
+        return
+    print_growth_table(rows[:TOP_DETAIL_LIMIT])
+
+
+def growth_menu_title(hours: int) -> str:
+    if hours == 1:
+        return "MENU 2 - APP CRESCIUTE - ULTIMA ORA"
+    if hours == 24:
+        return "MENU 3 - APP CRESCIUTE - ULTIME 24 ORE"
+    if hours == 168:
+        return "MENU 4 - APP CRESCIUTE - ULTIMI 7 GIORNI"
+    return f"APP CRESCIUTE - ULTIME {hours}H"
+
+
+def print_growth_table(rows: list[dict[str, Any]]) -> None:
+    print(f"{'APP':<12} {'CRESCITA':>12} {'RATE':>12} {'BUCKET':<18} LABELS")
+    print(f"{'-' * 12} {'-' * 12} {'-' * 12} {'-' * 18} {'-' * 28}")
+    for row in rows:
+        labels = ",".join(row.get("labels") or []) or "-"
         print(
-            f"{row.get('app_id')}  +{row.get('total_mb', 0)} MB  "
-            f"rate={row.get('growth_rate_mb_per_hour', 0)} MB/h  "
-            f"bucket={row.get('main_growth_bucket') or '-'}  "
-            f"labels={','.join(row.get('labels') or []) or '-'}"
+            f"{str(row.get('app_id') or '-'):<12.12} "
+            f"{format_mb_or_gb(as_float(row.get('total_mb'))):>12} "
+            f"{format_rate(row.get('growth_rate_mb_per_hour')):>12} "
+            f"{str(row.get('main_growth_bucket') or '-'):<18.18} "
+            f"{labels}"
         )
 
 
@@ -851,6 +875,15 @@ def format_mb_or_gb(value: float | None) -> str:
     if abs(value) >= 1024:
         return f"{sign}{round(value / 1024, 2)} GB"
     return f"{sign}{round(value, 2)} MB"
+
+
+def format_rate(value: Any) -> str:
+    number = as_float(value)
+    if number is None:
+        return "n/a"
+    if abs(number) >= 1024:
+        return f"{round(number / 1024, 2)} GB/h"
+    return f"{round(number, 2)} MB/h"
 
 
 def format_hours(value: int | float) -> str:
