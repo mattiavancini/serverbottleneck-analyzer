@@ -10,7 +10,8 @@ from typing import Any
 
 from .discovery import discover_applications
 
-TOP_DIRS_LIMIT = 20
+TOP_DIRS_LIMIT = 100
+TOP_DIRS_DEPTH = 4
 TOP_FILES_LIMIT = 20
 RECENT_FILES_WINDOW_HOURS = 24
 DU_TIMEOUT_SEC = 20
@@ -53,6 +54,8 @@ def collect_storage_report(
         "fixture_mode": fixture_mode,
         "collection_policy": {
             "max_depth": MAX_FILE_SCAN_DEPTH,
+            "top_dirs_depth": TOP_DIRS_DEPTH,
+            "max_file_scan_depth": MAX_FILE_SCAN_DEPTH,
             "top_dirs_limit": TOP_DIRS_LIMIT,
             "top_files_limit": TOP_FILES_LIMIT,
             "recent_files_window_hours": RECENT_FILES_WINDOW_HOURS,
@@ -188,9 +191,9 @@ def top_directories(app_root: Path) -> list[dict[str, Any]]:
 
 def du_depth_rows(path: Path) -> list[dict[str, Any]]:
     commands = (
-        ["du", "-x", "-B1", "--max-depth=2", str(path)],
-        ["du", "-x", "-B1", "-d", "2", str(path)],
-        ["du", "-k", "-d", "2", str(path)],
+        ["du", "-x", "-B1", f"--max-depth={TOP_DIRS_DEPTH}", str(path)],
+        ["du", "-x", "-B1", "-d", str(TOP_DIRS_DEPTH), str(path)],
+        ["du", "-k", "-d", str(TOP_DIRS_DEPTH), str(path)],
     )
     for cmd in commands:
         try:

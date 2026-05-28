@@ -83,6 +83,17 @@ Rifinita la leggibilita della dashboard SSH:
 - aggiunta nota: lo storage score e solo storage e non include ancora performance/PHP
 - trend resi piu leggibili con doppia altezza e spazio tra Load/RAM/Disk
 
+### Dettaglio app ad albero
+
+- corretta la resa dei trend: non viene piu duplicata la stessa riga, ma viene usata una mini-grafica a due righe reali
+- aggiunta etichetta alle barre di status per distinguere metriche medie e ultimo snapshot
+- aumentata la raccolta `top_directories` da profondita 2 a profondita 4
+- aumentato il numero di directory salvate nello snapshot da 20 a 100
+- il menu `Dettaglio app` mostra ora una vista ad albero delle directory principali
+- `Top files` nel dettaglio app ridotto ai primi 10 file
+
+Nota operativa: la profondita aggiuntiva compare pienamente solo dai nuovi snapshot raccolti dopo questo aggiornamento.
+
 ## 2026-05-27 - Storage Growth Analyzer e dashboard SSH per WP_Q
 
 ### Contesto

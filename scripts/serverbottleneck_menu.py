@@ -13,9 +13,10 @@ BLOCKS = "▁▂▃▄▅▆▇█"
 DEFAULT_WINDOW_HOURS = 168
 TOP_DASHBOARD_LIMIT = 15
 TOP_DETAIL_LIMIT = 30
+TOP_APP_FILES_LIMIT = 10
 TREND_WIDTH = 72
-TREND_MAX_POINTS = 144
-TREND_HEIGHT = 2
+TREE_CHILD_LIMIT = 8
+TREE_MAX_LINES = 90
 TABLE_WIDTH = 98
 STATUS_LABEL_WIDTH = 16
 STATUS_VALUE_WIDTH = TABLE_WIDTH - STATUS_LABEL_WIDTH - 7
@@ -229,17 +230,141 @@ def show_app_detail(data_dir: Path, server: str) -> None:
     print("Nota: lo storage score e solo un indicatore storage dell'ultimo snapshot; non include ancora performance/PHP.")
     print(f"Labels: {', '.join(app.get('labels') or [])}")
     print("")
+    print("Tree")
+    for line in render_app_tree(app):
+        print(line)
+    print("")
     print("Sizes")
     for key, value in sorted((app.get("sizes_bytes") or {}).items()):
         print(f"{key:14} {bytes_to_mb(value)} MB")
     print("")
     print("Top directories")
-    for item in (app.get("top_directories") or [])[:15]:
+    top_dirs = sorted(app.get("top_directories") or [], key=lambda item: (-(item.get("size_bytes") or 0), item.get("path") or ""))
+    for item in top_dirs[:15]:
         print(f"{item.get('size_mb')} MB  {item.get('path')}")
     print("")
-    print("Top files")
-    for item in (app.get("top_files") or [])[:15]:
+    print(f"Top files ({TOP_APP_FILES_LIMIT})")
+    top_file_rows = sorted(app.get("top_files") or [], key=lambda item: (-(item.get("size_bytes") or 0), item.get("path") or ""))
+    for item in top_file_rows[:TOP_APP_FILES_LIMIT]:
         print(f"{item.get('size_mb')} MB  {item.get('path')}")
+
+
+def render_app_tree(app: dict[str, Any]) -> list[str]:
+    app_id = str(app.get("app_id") or "app")
+    app_root = normalize_path(app.get("app_root") or "")
+    sizes = app.get("sizes_bytes") or {}
+    paths = app.get("paths") or {}
+    nodes: dict[str, int] = {}
+
+    def add_node(raw_path: Any, raw_size: Any) -> None:
+        path = normalize_path(raw_path)
+        if not path or not app_root or path == app_root:
+            return
+        if not path.startswith(app_root.rstrip("/") + "/"):
+            return
+        size = int(raw_size or 0)
+        if size <= 0:
+            return
+        nodes[path] = max(nodes.get(path, 0), size)
+        parent = path.rsplit("/", 1)[0]
+        while parent and parent != app_root and parent.startswith(app_root.rstrip("/") + "/"):
+            nodes[parent] = max(nodes.get(parent, 0), size)
+            parent = parent.rsplit("/", 1)[0]
+
+    for key, path in paths.items():
+        if key == "debug_log":
+            continue
+        add_node(path, sizes.get(key))
+
+    for item in app.get("top_directories") or []:
+        add_node(item.get("path"), item.get("size_bytes"))
+
+    root_size = int(sizes.get("total") or 0)
+    lines = [f"{app_id}/".ljust(58) + format_tree_size(root_size)]
+    if not nodes:
+        lines.append("  nessuna directory pesante disponibile nello snapshot")
+        return lines
+
+    main_path = main_tree_path(app, nodes)
+    render_children(app_root, "", lines, nodes, main_path, depth=0)
+    if len(lines) > TREE_MAX_LINES:
+        return lines[:TREE_MAX_LINES] + ["  ... albero abbreviato: usa Top directories per la lista completa"]
+    return lines
+
+
+def render_children(
+    parent: str,
+    prefix: str,
+    lines: list[str],
+    nodes: dict[str, int],
+    main_path: str | None,
+    depth: int,
+) -> None:
+    children = direct_children(parent, nodes)
+    if not children:
+        return
+    children = children[:TREE_CHILD_LIMIT]
+    for index, path in enumerate(children):
+        is_last = index == len(children) - 1
+        connector = "`-- " if is_last else "|-- "
+        child_prefix = "    " if is_last else "|   "
+        name = tree_node_name(path)
+        marker = " <- PRINCIPALE" if path == main_path else ""
+        label = f"{prefix}{connector}{name}/"
+        lines.append(label.ljust(58) + f"{format_tree_size(nodes[path])}{marker}")
+        if depth < 4:
+            render_children(path, prefix + child_prefix, lines, nodes, main_path, depth + 1)
+
+
+def direct_children(parent: str, nodes: dict[str, int]) -> list[str]:
+    prefix = parent.rstrip("/") + "/"
+    output = []
+    for path in nodes:
+        if not path.startswith(prefix):
+            continue
+        rest = path[len(prefix) :]
+        if rest and "/" not in rest:
+            output.append(path)
+    output.sort(key=lambda path: (-nodes[path], path))
+    return output
+
+
+def main_tree_path(app: dict[str, Any], nodes: dict[str, int]) -> str | None:
+    paths = app.get("paths") or {}
+    delta = app.get("delta_previous") or {}
+    bucket = delta.get("main_growth_bucket")
+    if isinstance(bucket, str) and paths.get(bucket):
+        path = normalize_path(paths.get(bucket))
+        if path in nodes:
+            return path
+    if not nodes:
+        return None
+    return max(nodes, key=lambda path: nodes[path])
+
+
+def normalize_path(value: Any) -> str:
+    return str(value or "").replace("\\", "/").rstrip("/")
+
+
+def tree_node_name(path: str) -> str:
+    return path.rstrip("/").rsplit("/", 1)[-1] or path
+
+
+def format_tree_size(value: Any) -> str:
+    try:
+        size = float(value or 0)
+    except (TypeError, ValueError):
+        size = 0.0
+    units = ["B", "K", "M", "G", "T"]
+    index = 0
+    while size >= 1024 and index < len(units) - 1:
+        size /= 1024
+        index += 1
+    if index == 0:
+        return f"{int(size)}{units[index]}"
+    if size >= 100:
+        return f"{round(size)}{units[index]}"
+    return f"{round(size, 1)}{units[index]}"
 
 
 def choose_server(servers: list[str], current: str) -> str:
@@ -356,18 +481,18 @@ def print_status_table(
     print(box_mid(TABLE_WIDTH))
     print(status_row("CPU cores", str(int(cpu_count))))
     print(status_row("Load avg", f"{avg(load_values)} media / {peak(load_values)} picco - {load_status(load_reference, cpu_count)}"))
-    print(status_detail(load_bar(load_reference, cpu_count, width=58)))
+    print(status_detail(f"{load_bar(load_reference, cpu_count, width=58)} media"))
     print(status_detail("scala: 1.00/core = CPU occupata; >1.50/core = coda alta"))
     ram_pct = percent(avg_number(ram_values), ram_total)
     print(status_row("RAM used", f"{avg(ram_values)} MB media / {peak(ram_values)} MB picco - {fmt_pct(ram_pct)}"))
-    print(status_detail(bar(ram_pct, 100, width=58)))
+    print(status_detail(f"{bar(ram_pct, 100, width=58)} media"))
     if swap_total and swap_total > 0:
         swap_pct = percent(avg_number(swap_values), swap_total)
         print(status_row("Swap used", f"{avg(swap_values)} MB media / {peak(swap_values)} MB picco - {fmt_pct(swap_pct)}"))
-        print(status_detail(bar(swap_pct, 100, width=58)))
+        print(status_detail(f"{bar(swap_pct, 100, width=58)} media"))
     disk_pct = as_float(disk.get("used_pct"))
     print(status_row("Disk used", f"{bytes_to_gb(disk.get('used_bytes'))} GB / {bytes_to_gb(disk.get('total_bytes'))} GB - {fmt(disk.get('used_pct'))}%"))
-    print(status_detail(bar(disk_pct, 100, width=58)))
+    print(status_detail(f"{bar(disk_pct, 100, width=58)} ultimo snapshot"))
     print(status_row("Disk free", f"{bytes_to_gb(disk.get('free_bytes'))} GB"))
     print(status_row("Disk growth", f"{format_mb_or_gb(disk_growth_mb)} dal primo snapshot della finestra"))
     print(status_row("PHP-FPM proc", f"{avg(php_fpm_values)} media / {peak(php_fpm_values)} picco"))
@@ -540,45 +665,51 @@ def nested(payload: dict[str, Any], *keys: str) -> Any:
     return current
 
 
-def sparkline(values: list[Any]) -> str:
+def sparkline_levels(values: list[Any], width: int) -> list[int]:
     numbers = normalize_numbers(values)
     if not numbers:
-        return "n/a"
-    numbers = downsample(numbers, TREND_MAX_POINTS)
+        return []
+    numbers = downsample(numbers, width)
     if len(numbers) == 1:
-        return BLOCKS[-1]
+        return [len(BLOCKS) - 1]
     low = min(numbers)
     high = max(numbers)
     if high == low:
-        return BLOCKS[0] * len(numbers)
-    output = []
+        return [0 for _ in numbers]
+    levels = []
     for value in numbers:
         index = int(round(((value - low) / (high - low)) * (len(BLOCKS) - 1)))
-        output.append(BLOCKS[index])
-    return "".join(output)
+        levels.append(index)
+    return expand_levels(levels, width)
 
 
 def print_trend(label: str, values: list[Any]) -> None:
-    line = expand_sparkline(sparkline(values), TREND_WIDTH)
-    if line == "n/a":
+    levels = sparkline_levels(values, TREND_WIDTH)
+    if not levels:
         print(f"{label:<5} n/a")
         print("")
         return
-    chunks = [line[index:index + TREND_WIDTH] for index in range(0, len(line), TREND_WIDTH)]
-    for chunk_index, chunk in enumerate(chunks[:2]):
-        for height_index in range(TREND_HEIGHT):
-            prefix = f"{label:<5} " if chunk_index == 0 and height_index == 0 else "      "
-            print(f"{prefix}{chunk}")
+    top = []
+    bottom = []
+    for level in levels:
+        if level >= 4:
+            top.append(BLOCKS[level - 4])
+            bottom.append(BLOCKS[-1])
+        else:
+            top.append(" ")
+            bottom.append(BLOCKS[level])
+    print(f"{label:<5} {''.join(top)}")
+    print(f"{'':<5} {''.join(bottom)}")
     print("")
 
 
-def expand_sparkline(line: str, target_width: int) -> str:
-    if line == "n/a" or not line:
-        return line
-    if len(line) >= target_width:
-        return line
-    repeat = max(1, target_width // len(line))
-    expanded = "".join(char * repeat for char in line)
+def expand_levels(levels: list[int], target_width: int) -> list[int]:
+    if not levels or len(levels) >= target_width:
+        return levels
+    repeat = max(1, target_width // len(levels))
+    expanded = [level for level in levels for _ in range(repeat)]
+    if len(expanded) < target_width:
+        expanded.extend([levels[-1]] * (target_width - len(expanded)))
     return expanded[:target_width]
 
 
