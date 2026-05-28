@@ -112,7 +112,8 @@ Nota operativa: la profondita aggiuntiva compare pienamente solo dai nuovi snaps
 - spostata la legenda delle schermate crescita sotto la tabella
 - legenda stampata una voce per riga
 - chiarito `bucket`: categoria interna che spiega dove si concentra la crescita, per esempio backup locali, cache, log, upload, import o tmp
-- aggiunti colori ANSI: titoli in giallo, etichette introduttive in blu
+- aggiunti colori ANSI: titoli in giallo, etichette introduttive in verde
+- sostituito il blu con il verde per migliorare il contrasto nei terminali scuri
 - gestione larghezza tabelle aggiornata per non rompere i bordi quando i colori sono attivi
 - lo stile titoli/etichette e applicato alle schermate principali del menu SSH
 

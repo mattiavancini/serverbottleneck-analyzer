@@ -14,7 +14,7 @@ BLOCKS = "▁▂▃▄▅▆▇█"
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 COLOR_ENABLED = sys.stdout.isatty() and not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"
 YELLOW = "1;33"
-BLUE = "34"
+GREEN = "32"
 DEFAULT_WINDOW_HOURS = 168
 TOP_DASHBOARD_LIMIT = 15
 TOP_DETAIL_LIMIT = 30
@@ -601,7 +601,7 @@ def title(value: Any) -> str:
 
 
 def label_color(value: Any) -> str:
-    return color(str(value), BLUE)
+    return color(str(value), GREEN)
 
 
 def intro(label: str, value: str) -> str:
