@@ -129,6 +129,8 @@ def collect_app_storage(
     paths = known_storage_paths(app_root, log_dir)
     previous_sizes = (previous_app or {}).get("sizes_bytes") or {}
     size_results = {name: size_path(path, fixture_mode, previous_sizes.get(name)) for name, path in paths.items()}
+    top_dirs = [] if fixture_mode else top_directories(app_root)
+    reconcile_parent_sizes(size_results, paths, top_dirs)
     sizes = {name: result["size_bytes"] for name, result in size_results.items()}
     roots_for_file_scan = candidate_file_scan_roots(paths)
     return {
@@ -138,10 +140,44 @@ def collect_app_storage(
         "size_quality": {name: result["quality"] for name, result in size_results.items()},
         "scan_warnings": [result["warning"] for result in size_results.values() if result.get("warning")],
         "paths": {name: str(path) for name, path in paths.items()},
-        "top_directories": [] if fixture_mode else top_directories(app_root),
+        "top_directories": top_dirs,
         "top_files": [] if fixture_mode else top_files(roots_for_file_scan, TOP_FILES_LIMIT, recent_only=False),
         "recent_large_files": [] if fixture_mode else top_files(roots_for_file_scan, TOP_FILES_LIMIT, recent_only=True),
     }
+
+
+def reconcile_parent_sizes(size_results: dict[str, dict[str, Any]], paths: dict[str, Path], top_dirs: list[dict[str, Any]]) -> None:
+    directory_sizes = {normalize_path(item.get("path")): int_or_zero(item.get("size_bytes")) for item in top_dirs}
+    for key in ("public_html", "wp_content", "uploads", "cache", "wpallimport", "local_backups", "logs", "tmp"):
+        path = normalize_path(paths.get(key))
+        child_floor = max_descendant_size(path, directory_sizes)
+        exact_floor = directory_sizes.get(path, 0)
+        bump_size_result(size_results, key, max(child_floor, exact_floor), "child directory larger than recorded bucket")
+
+    total_floor = sum(
+        int_or_zero((size_results.get(key) or {}).get("size_bytes"))
+        for key in ("public_html", "local_backups", "logs", "tmp")
+    )
+    bump_size_result(size_results, "total", total_floor, "top-level buckets larger than recorded app total")
+
+
+def max_descendant_size(parent: str, directory_sizes: dict[str, int]) -> int:
+    if not parent:
+        return 0
+    prefix = parent.rstrip("/") + "/"
+    return max((size for path, size in directory_sizes.items() if path.startswith(prefix)), default=0)
+
+
+def bump_size_result(size_results: dict[str, dict[str, Any]], key: str, minimum_size: int, reason: str) -> None:
+    result = size_results.get(key)
+    if not result or minimum_size <= int_or_zero(result.get("size_bytes")):
+        return
+    original = int_or_zero(result.get("size_bytes"))
+    result["size_bytes"] = minimum_size
+    quality = result.setdefault("quality", {})
+    quality["method"] = f"{quality.get('method', 'unknown')}+reconciled_from_children"
+    quality["reliable"] = False
+    result["warning"] = f"{key} size reconciled from {original} to {minimum_size}: {reason}"
 
 
 def known_storage_paths(app_root: Path, log_dir: Path) -> dict[str, Path]:
@@ -226,6 +262,10 @@ def int_or_zero(value: Any) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def normalize_path(value: Any) -> str:
+    return str(value or "").replace("\\", "/").rstrip("/")
 
 
 def du_size_bytes(path: Path) -> int | None:

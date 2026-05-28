@@ -151,6 +151,14 @@ Nota operativa: la profondita aggiuntiva compare pienamente solo dai nuovi snaps
 - `APP SIZE TREE` mostra `Discovery` e marca le app non trovate nella run corrente con `missing discovery`
 - il dettaglio app segnala quando le dimensioni sono state mantenute perche l'app non e stata scoperta nella run corrente
 
+### Riconciliazione dimensioni parent/child
+
+- il collector riconcilia le dimensioni dei parent quando un figlio risulta piu grande del padre misurato
+- `total` app viene portato almeno alla somma dei bucket top-level noti (`public_html`, `local_backups`, `logs`, `tmp`)
+- i valori riconciliati vengono marcati come non pienamente affidabili in `size_quality`
+- la dashboard e il dettaglio app calcolano una dimensione effettiva anche sugli snapshot gia esistenti, evitando casi impossibili come root `194M` con figli da diversi GB
+- `Top directories` nel dettaglio usa parent inferiti, quindi `public_html` e `wp-content` non restano piu sotto i figli
+
 ## 2026-05-27 - Storage Growth Analyzer e dashboard SSH per WP_Q
 
 ### Contesto

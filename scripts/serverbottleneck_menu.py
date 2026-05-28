@@ -286,13 +286,13 @@ def app_size_rows(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
             app_id = str(app.get("app_id") or "")
             if not app_id:
                 continue
-            size = int((app.get("sizes_bytes") or {}).get("total") or 0)
+            size = app_effective_total_bytes(app)
             max_sizes[app_id] = max(max_sizes.get(app_id, 0), size)
     rows = []
     for app_id, max_size in max_sizes.items():
         latest_app = latest_apps.get(app_id)
         present_latest = latest_app is not None
-        current_size = int(((latest_app or {}).get("sizes_bytes") or {}).get("total") or 0)
+        current_size = app_effective_total_bytes(latest_app or {})
         quality = (((latest_app or {}).get("size_quality") or {}).get("total") or {})
         missing_current_discovery = bool((latest_app or {}).get("missing_current_discovery"))
         dropped = max_size > 0 and current_size < max_size * 0.75 and (max_size - current_size) >= 512 * 1024 * 1024
@@ -379,7 +379,7 @@ def render_app_tree(app: dict[str, Any]) -> list[str]:
     app_id = str(app.get("app_id") or "app")
     app_root = normalize_path(app.get("app_root") or "")
     nodes = app_directory_nodes(app, infer_parents=True)
-    root_size = int((app.get("sizes_bytes") or {}).get("total") or 0)
+    root_size = app_effective_total_bytes(app)
     lines = [f"{app_id}/".ljust(58) + format_tree_size(root_size)]
     if not nodes:
         lines.append("  nessuna directory pesante disponibile nello snapshot")
@@ -393,10 +393,21 @@ def render_app_tree(app: dict[str, Any]) -> list[str]:
 
 
 def app_directory_rows(app: dict[str, Any]) -> list[dict[str, Any]]:
-    nodes = app_directory_nodes(app, infer_parents=False)
+    nodes = app_directory_nodes(app, infer_parents=True)
     rows = [{"path": path, "size_bytes": size} for path, size in nodes.items()]
     rows.sort(key=lambda item: (-(item.get("size_bytes") or 0), item.get("path") or ""))
     return rows
+
+
+def app_effective_total_bytes(app: dict[str, Any]) -> int:
+    if not app:
+        return 0
+    sizes = app.get("sizes_bytes") or {}
+    total = int_or_zero(sizes.get("total"))
+    app_root = normalize_path(app.get("app_root") or "")
+    nodes = app_directory_nodes(app, infer_parents=True)
+    direct_sum = sum(nodes[path] for path in direct_children(app_root, nodes)) if app_root else 0
+    return max(total, direct_sum)
 
 
 def app_directory_nodes(app: dict[str, Any], infer_parents: bool) -> dict[str, int]:
@@ -999,6 +1010,13 @@ def as_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def int_or_zero(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def parse_dt(value: Any) -> datetime:
