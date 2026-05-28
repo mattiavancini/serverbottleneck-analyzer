@@ -107,6 +107,15 @@ Nota operativa: la profondita aggiuntiva compare pienamente solo dai nuovi snaps
 - aggiunta legenda per `crescita`, `rate`, `bucket` e `labels`
 - sostituito output inline con tabella leggibile: `APP`, `CRESCITA`, `RATE`, `BUCKET`, `LABELS`
 
+### Stile terminale e legenda
+
+- spostata la legenda delle schermate crescita sotto la tabella
+- legenda stampata una voce per riga
+- chiarito `bucket`: categoria interna che spiega dove si concentra la crescita, per esempio backup locali, cache, log, upload, import o tmp
+- aggiunti colori ANSI: titoli in giallo, etichette introduttive in blu
+- gestione larghezza tabelle aggiornata per non rompere i bordi quando i colori sono attivi
+- lo stile titoli/etichette e applicato alle schermate principali del menu SSH
+
 ## 2026-05-27 - Storage Growth Analyzer e dashboard SSH per WP_Q
 
 ### Contesto

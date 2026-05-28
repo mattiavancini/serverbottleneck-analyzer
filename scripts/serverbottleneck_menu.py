@@ -4,12 +4,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 BLOCKS = "▁▂▃▄▅▆▇█"
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+COLOR_ENABLED = sys.stdout.isatty() and not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"
+YELLOW = "1;33"
+BLUE = "34"
 DEFAULT_WINDOW_HOURS = 168
 TOP_DASHBOARD_LIMIT = 15
 TOP_DETAIL_LIMIT = 30
@@ -63,7 +68,7 @@ def run_menu(data_dir: Path, server: str, hours: int, servers: list[str]) -> Non
         clear_screen()
         print_dashboard(data_dir, current_server, current_hours)
         print("")
-        print("MENU")
+        print(title("MENU"))
         print("[1] Server status")
         print("[2] App cresciute ultima ora")
         print("[3] App cresciute ultime 24 ore")
@@ -99,7 +104,7 @@ def print_dashboard(data_dir: Path, server: str, hours: int) -> None:
     storage = load_payloads(data_dir, server, "storage-*.json")
     inspections = load_payloads(data_dir, server, "inspection-*.json")
     if not storage and not inspections:
-        print(f"SERVER BOTTLENECK ANALYZER - {server}")
+        print(title(f"SERVER BOTTLENECK ANALYZER - {server}"))
         print("No local reports found for this server.")
         return
     latest_storage = storage[-1] if storage else {}
@@ -125,7 +130,7 @@ def print_dashboard(data_dir: Path, server: str, hours: int) -> None:
     disk_values = [nested(item, "server_disk", "used_pct") for item in selected_storage]
     php_fpm_values = [nested(item, "server_snapshot", "php_fpm_process_count") for item in selected_inspections]
 
-    print(f"SERVER BOTTLENECK ANALYZER - {server}")
+    print(title(f"SERVER BOTTLENECK ANALYZER - {server}"))
     print("")
     print_window_table(hours, first_storage, latest_storage, first_inspection, latest_inspection, observed_hours, observed_label)
     print("")
@@ -143,12 +148,12 @@ def print_dashboard(data_dir: Path, server: str, hours: int) -> None:
         redis_status=nested(latest_inspection, "server_snapshot", "redis_status") or "n/a",
     )
     print("")
-    print("TREND")
+    print(title("TREND"))
     print_trend("Load", load_values)
     print_trend("RAM", ram_values)
     print_trend("Disk", disk_values)
     print("")
-    print("TOP STORAGE GROWTH (dal primo snapshot della finestra)")
+    print(title("TOP STORAGE GROWTH (dal primo snapshot della finestra)"))
     rows = window_growth_rows(selected_storage)
     if not rows:
         rows = (latest_storage.get("rankings") or {}).get("top_growth_apps") or []
@@ -165,18 +170,16 @@ def show_growth(data_dir: Path, server: str, hours: int) -> None:
     payloads = load_payloads(data_dir, server, "storage-*.json")
     selected = select_window(payloads, hours)
     clear_screen()
-    print(f"{growth_menu_title(hours)} - {server}")
-    print("Stai vedendo la crescita storage per app: confronto tra primo e ultimo snapshot nella finestra richiesta.")
+    print(title(f"{growth_menu_title(hours)} - {server}"))
+    print(intro("Stai vedendo", "crescita storage per app, confrontando il primo e l'ultimo snapshot nella finestra richiesta."))
     if len(selected) >= 2:
-        print(f"Confronto: {compact_dt(selected[0].get('generated_at_utc'))} -> {compact_dt(selected[-1].get('generated_at_utc'))}")
+        print(intro("Confronto", f"{compact_dt(selected[0].get('generated_at_utc'))} -> {compact_dt(selected[-1].get('generated_at_utc'))}"))
     label = observed_window_label(selected, hours)
     if label:
-        print(f"Finestra dati reale: {label}")
+        print(intro("Finestra dati reale", label))
     disk_growth_mb = disk_growth_for_window(selected)
     if disk_growth_mb is not None:
-        print(f"Disk growth osservato: {format_mb_or_gb(disk_growth_mb)}")
-    print("")
-    print("Legenda: crescita = aumento totale nella finestra; rate = media oraria; bucket = area cresciuta di piu; labels = classificazione automatica.")
+        print(intro("Disk growth osservato", format_mb_or_gb(disk_growth_mb)))
     print("")
     rows = window_growth_rows(selected)
     if not rows and payloads:
@@ -186,6 +189,8 @@ def show_growth(data_dir: Path, server: str, hours: int) -> None:
         print("none")
         return
     print_growth_table(rows[:TOP_DETAIL_LIMIT])
+    print("")
+    print_growth_legend()
 
 
 def growth_menu_title(hours: int) -> str:
@@ -199,7 +204,7 @@ def growth_menu_title(hours: int) -> str:
 
 
 def print_growth_table(rows: list[dict[str, Any]]) -> None:
-    print(f"{'APP':<12} {'CRESCITA':>12} {'RATE':>12} {'BUCKET':<18} LABELS")
+    print(title(f"{'APP':<12} {'CRESCITA':>12} {'RATE':>12} {'BUCKET':<18} LABELS"))
     print(f"{'-' * 12} {'-' * 12} {'-' * 12} {'-' * 18} {'-' * 28}")
     for row in rows:
         labels = ",".join(row.get("labels") or []) or "-"
@@ -212,10 +217,19 @@ def print_growth_table(rows: list[dict[str, Any]]) -> None:
         )
 
 
+def print_growth_legend() -> None:
+    print(title("*** LEGENDA ***"))
+    print(intro("crescita", "aumento totale dello spazio occupato dall'app nella finestra"))
+    print(intro("rate", "media oraria della crescita nella finestra"))
+    print(intro("bucket", "categoria interna che spiega dove si concentra la crescita: backup locali, cache, log, upload, import, tmp"))
+    print(intro("labels", "classificazione automatica del tipo di problema probabile"))
+
+
 def show_top_directories(data_dir: Path, server: str) -> None:
     latest = latest_payload(data_dir, server, "storage-*.json")
     clear_screen()
-    print(f"TOP DIRECTORIES - {server}")
+    print(title(f"TOP DIRECTORIES - {server}"))
+    print(intro("Stai vedendo", "le directory piu pesanti trovate nell'ultimo snapshot storage."))
     print("")
     rows = []
     for app in latest.get("apps") or []:
@@ -231,7 +245,8 @@ def show_top_directories(data_dir: Path, server: str) -> None:
 def show_top_files(data_dir: Path, server: str) -> None:
     latest = latest_payload(data_dir, server, "storage-*.json")
     clear_screen()
-    print(f"TOP FILES - {server}")
+    print(title(f"TOP FILES - {server}"))
+    print(intro("Stai vedendo", "i file piu grandi trovati nell'ultimo snapshot storage."))
     print("")
     rows = (latest.get("rankings") or {}).get("top_large_files") or []
     for item in rows[:30]:
@@ -248,22 +263,22 @@ def show_app_detail(data_dir: Path, server: str) -> None:
     if not app:
         print("App not found.")
         return
-    print(f"APP DETAIL - {server}/{app_id}")
+    print(title(f"APP DETAIL - {server}/{app_id}"))
     print("")
-    print(f"Storage score: {app.get('suspicion_score', 0)}")
-    print("Nota: lo storage score e solo un indicatore storage dell'ultimo snapshot; non include ancora performance/PHP.")
-    print(f"Labels: {', '.join(app.get('labels') or [])}")
+    print(intro("Storage score", str(app.get("suspicion_score", 0))))
+    print(intro("Nota", "lo storage score e solo un indicatore storage dell'ultimo snapshot; non include ancora performance/PHP."))
+    print(intro("Labels", ", ".join(app.get("labels") or []) or "-"))
     print("")
-    print("Tree")
+    print(title("Tree"))
     for line in render_app_tree(app):
         print(line)
     print("")
-    print("Top directories")
+    print(title("Top directories"))
     top_dirs = app_directory_rows(app)
     for item in top_dirs[:TOP_DETAIL_LIMIT]:
         print(f"{bytes_to_mb(item.get('size_bytes'))} MB  {item.get('path')}")
     print("")
-    print(f"Top files ({TOP_APP_FILES_LIMIT})")
+    print(title(f"Top files ({TOP_APP_FILES_LIMIT})"))
     top_file_rows = sorted(app.get("top_files") or [], key=lambda item: (-(item.get("size_bytes") or 0), item.get("path") or ""))
     for item in top_file_rows[:TOP_APP_FILES_LIMIT]:
         print(f"{item.get('size_mb')} MB  {item.get('path')}")
@@ -404,7 +419,7 @@ def format_tree_size(value: Any) -> str:
 
 def choose_server(servers: list[str], current: str) -> str:
     clear_screen()
-    print("SERVER DISPONIBILI")
+    print(title("SERVER DISPONIBILI"))
     for index, server in enumerate(servers, start=1):
         marker = "*" if server == current else " "
         print(f"[{index}] {marker} {server}")
@@ -482,19 +497,19 @@ def print_window_table(
 ) -> None:
     col_width = (TABLE_WIDTH - 7) // 2
     print(box_top(TABLE_WIDTH))
-    print(box_full(f"Finestra target: ultimi {format_hours(hours)}", TABLE_WIDTH))
+    print(box_full(intro("Finestra target", f"ultimi {format_hours(hours)}"), TABLE_WIDTH))
     print(box_mid(TABLE_WIDTH))
-    print(two_col_row("PRIMO SNAPSHOT", "ULTIMO SNAPSHOT", col_width))
-    print(two_col_row(f"storage:     {compact_dt(first_storage.get('generated_at_utc'))}", f"storage:     {compact_dt(latest_storage.get('generated_at_utc'))}", col_width))
-    print(two_col_row(f"performance: {compact_dt(first_inspection.get('generated_at_utc'))}", f"performance: {compact_dt(latest_inspection.get('generated_at_utc'))}", col_width))
+    print(two_col_row(title("PRIMO SNAPSHOT"), title("ULTIMO SNAPSHOT"), col_width))
+    print(two_col_row(intro("storage", compact_dt(first_storage.get('generated_at_utc'))), intro("storage", compact_dt(latest_storage.get('generated_at_utc'))), col_width))
+    print(two_col_row(intro("performance", compact_dt(first_inspection.get('generated_at_utc'))), intro("performance", compact_dt(latest_inspection.get('generated_at_utc'))), col_width))
     print(box_mid(TABLE_WIDTH))
     if observed_hours is None:
-        print(box_full(f"Finestra dati: nessun confronto disponibile / target {format_hours(hours)}", TABLE_WIDTH))
-        print(box_full(f"Riempimento:   {bar(0, 100, width=52)} 0.0%", TABLE_WIDTH))
+        print(box_full(intro("Finestra dati", f"nessun confronto disponibile / target {format_hours(hours)}"), TABLE_WIDTH))
+        print(box_full(intro("Riempimento", f"{bar(0, 100, width=52)} 0.0%"), TABLE_WIDTH))
     else:
         pct = min(max((observed_hours / max(hours, 1)) * 100, 0.0), 100.0)
-        print(box_full(f"Finestra dati: {observed_label or format_hours(observed_hours)}", TABLE_WIDTH))
-        print(box_full(f"Riempimento:   {bar(pct, 100, width=52)} {round(pct, 1)}% del target", TABLE_WIDTH))
+        print(box_full(intro("Finestra dati", observed_label or format_hours(observed_hours)), TABLE_WIDTH))
+        print(box_full(intro("Riempimento", f"{bar(pct, 100, width=52)} {round(pct, 1)}% del target"), TABLE_WIDTH))
     print(box_bottom(TABLE_WIDTH))
 
 
@@ -512,7 +527,7 @@ def print_status_table(
     redis_status: str,
 ) -> None:
     print(box_top(TABLE_WIDTH))
-    print(box_full("SERVER STATUS", TABLE_WIDTH))
+    print(box_full(title("SERVER STATUS"), TABLE_WIDTH))
     print(box_mid(TABLE_WIDTH))
     print(status_row("CPU cores", str(int(cpu_count))))
     print(status_row("Load avg", f"{avg(load_values)} media / {peak(load_values)} picco - {load_status(load_reference, cpu_count)}"))
@@ -565,7 +580,7 @@ def two_col_row(left: str, right: str, col_width: int) -> str:
 
 
 def status_row(label: str, value: str) -> str:
-    return "| " + fit_text(label, STATUS_LABEL_WIDTH) + " | " + fit_text(value, STATUS_VALUE_WIDTH) + " |"
+    return "| " + fit_text(label_color(label), STATUS_LABEL_WIDTH) + " | " + fit_text(value, STATUS_VALUE_WIDTH) + " |"
 
 
 def status_detail(value: str) -> str:
@@ -574,9 +589,37 @@ def status_detail(value: str) -> str:
 
 def fit_text(value: Any, width: int) -> str:
     text = str(value)
-    if len(text) > width:
-        return text[: max(width - 1, 0)] + "…" if width > 1 else text[:width]
-    return text.ljust(width)
+    visible = visible_len(text)
+    if visible > width:
+        plain = strip_ansi(text)
+        return plain[: max(width - 1, 0)] + "…" if width > 1 else plain[:width]
+    return text + " " * (width - visible)
+
+
+def title(value: Any) -> str:
+    return color(str(value), YELLOW)
+
+
+def label_color(value: Any) -> str:
+    return color(str(value), BLUE)
+
+
+def intro(label: str, value: str) -> str:
+    return f"{label_color(label + ':')} {value}"
+
+
+def color(value: str, code: str) -> str:
+    if not COLOR_ENABLED:
+        return value
+    return f"\033[{code}m{value}\033[0m"
+
+
+def strip_ansi(value: str) -> str:
+    return ANSI_RE.sub("", value)
+
+
+def visible_len(value: str) -> int:
+    return len(strip_ansi(value))
 
 
 def observed_window_hours(payloads: list[dict[str, Any]]) -> float | None:
