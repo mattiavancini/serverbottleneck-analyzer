@@ -1,5 +1,50 @@
 # Changelog
 
+## 2026-05-28 - Crescita su finestra disponibile
+
+### Contesto
+
+Dopo la prima notte di monitoring su `WP_Q`, la dashboard mostrava correttamente i trend e la crescita dell'ultima ora, ma il menu "ultime 24 ore" restituiva `none`.
+
+Motivo:
+
+- non erano ancora passate 24 ore complete dalla prima baseline
+- il collector calcolava `delta_24h` solo quando esisteva uno snapshot vecchio almeno 24 ore
+- operativamente serviva invece vedere subito la crescita osservata tra il primo snapshot disponibile e l'ultimo
+
+### Modifica
+
+Aggiornati:
+
+```text
+scripts/serverbottleneck_menu.py
+scripts/summarize_storage.py
+```
+
+Ora il menu:
+
+- mostra la finestra dati disponibile, per esempio `14.3h disponibili su 24h richieste`
+- calcola la crescita disco osservata sulla finestra disponibile
+- calcola la crescita per app confrontando primo e ultimo snapshot della finestra
+- usa questa crescita anche per le voci "ultime 24 ore" e "ultimi 7 giorni" quando non esiste ancora una baseline completa
+
+Questo permette di rispondere subito a domande come:
+
+- "Da ieri a oggi sono spariti 30 GB: da dove vengono?"
+- "Quali app sono cresciute da quando abbiamo iniziato il monitoring?"
+- "Il problema e cache, backup, log, upload o altro?"
+
+### Nota UI
+
+Riordinato il blocco iniziale della dashboard in modo piu naturale:
+
+1. CPU/load
+2. RAM/swap
+3. disco
+4. PHP-FPM/Redis
+
+Il miglioramento della leggibilita resta un lavoro aperto, ma la priorita di questa modifica e rendere disponibile subito il delta osservato.
+
 ## 2026-05-27 - Storage Growth Analyzer e dashboard SSH per WP_Q
 
 ### Contesto

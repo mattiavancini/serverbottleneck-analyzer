@@ -95,9 +95,10 @@ def print_dashboard(data_dir: Path, server: str, hours: int) -> None:
     latest_storage = storage[-1] if storage else {}
     selected_storage = select_window(storage, hours)
     selected_inspections = select_window(inspections, hours)
+    observed_label = observed_window_label(selected_storage, hours)
     latest_inspection = inspections[-1] if inspections else {}
     disk = latest_storage.get("server_disk") or {}
-    growth_label, growth_value = storage_growth_label(latest_storage)
+    disk_growth_mb = disk_growth_for_window(selected_storage)
     snapshot = latest_inspection.get("server_snapshot") if isinstance(latest_inspection.get("server_snapshot"), dict) else {}
     cpu_count = as_float(snapshot.get("cpu_count")) or as_float(os.cpu_count()) or 1.0
     latest_load = first_load(latest_inspection)
@@ -113,17 +114,13 @@ def print_dashboard(data_dir: Path, server: str, hours: int) -> None:
     print(f"SERVER BOTTLENECK ANALYZER - {server}")
     print("")
     print(f"Periodo: ultime {hours}h")
+    if observed_label:
+        print(f"Finestra dati: {observed_label}")
     print(f"Ultimo storage snapshot: {latest_storage.get('generated_at_utc', 'n/a')}")
     print(f"Ultimo performance snapshot: {latest_inspection.get('generated_at_utc', 'n/a')}")
     print("")
     print("SERVER STATUS")
     print(f"CPU cores:      {int(cpu_count)}")
-    print(
-        f"Disk used:      {bytes_to_gb(disk.get('used_bytes'))} GB / {bytes_to_gb(disk.get('total_bytes'))} GB"
-        f"   {bar(as_float(disk.get('used_pct')), 100)} {fmt(disk.get('used_pct'))}%"
-    )
-    print(f"Disk free:      {bytes_to_gb(disk.get('free_bytes'))} GB")
-    print(f"Disk growth:    {fmt(growth_value)} MB / {growth_label}")
     print(
         f"Load avg:       {avg(load_values)} avg / {peak(load_values)} peak   "
         f"{load_bar(latest_load, cpu_count)} {load_status(latest_load, cpu_count)}"
@@ -138,6 +135,12 @@ def print_dashboard(data_dir: Path, server: str, hours: int) -> None:
             f"Swap used:      {fmt(latest_swap_used)} MB / {fmt(latest_swap_total)} MB   "
             f"{bar(percent(latest_swap_used, latest_swap_total), 100)} {fmt_pct(percent(latest_swap_used, latest_swap_total))}"
         )
+    print(
+        f"Disk used:      {bytes_to_gb(disk.get('used_bytes'))} GB / {bytes_to_gb(disk.get('total_bytes'))} GB"
+        f"   {bar(as_float(disk.get('used_pct')), 100)} {fmt(disk.get('used_pct'))}%"
+    )
+    print(f"Disk free:      {bytes_to_gb(disk.get('free_bytes'))} GB")
+    print(f"Disk growth:    {format_mb_or_gb(disk_growth_mb)} / {observed_label or 'previous snapshot'}")
     print(f"PHP-FPM proc:   {avg(php_fpm_values)} avg / {peak(php_fpm_values)} peak")
     print(f"Redis:          {nested(latest_inspection, 'server_snapshot', 'redis_status') or 'n/a'}")
     print("")
@@ -147,7 +150,9 @@ def print_dashboard(data_dir: Path, server: str, hours: int) -> None:
     print(f"Disk:  {sparkline(disk_values)}")
     print("")
     print("TOP STORAGE GROWTH")
-    rows = (latest_storage.get("rankings") or {}).get("top_growth_24h_apps") or (latest_storage.get("rankings") or {}).get("top_growth_apps") or []
+    rows = window_growth_rows(selected_storage)
+    if not rows:
+        rows = (latest_storage.get("rankings") or {}).get("top_growth_apps") or []
     if not rows:
         print("none")
     for index, row in enumerate(rows[:5], start=1):
@@ -158,12 +163,21 @@ def print_dashboard(data_dir: Path, server: str, hours: int) -> None:
 
 
 def show_growth(data_dir: Path, server: str, hours: int) -> None:
-    latest = latest_payload(data_dir, server, "storage-*.json")
+    payloads = load_payloads(data_dir, server, "storage-*.json")
+    selected = select_window(payloads, hours)
     clear_screen()
     print(f"TOP STORAGE GROWTH - {server} - {hours}h")
+    label = observed_window_label(selected, hours)
+    if label:
+        print(f"Finestra dati: {label}")
+    disk_growth_mb = disk_growth_for_window(selected)
+    if disk_growth_mb is not None:
+        print(f"Disk growth osservato: {format_mb_or_gb(disk_growth_mb)}")
     print("")
-    key = "top_growth_24h_apps" if hours >= 24 else "top_growth_apps"
-    rows = (latest.get("rankings") or {}).get(key) or []
+    rows = window_growth_rows(selected)
+    if not rows and payloads:
+        latest = payloads[-1]
+        rows = (latest.get("rankings") or {}).get("top_growth_apps") or []
     if not rows:
         print("none")
     for row in rows[:20]:
@@ -296,6 +310,90 @@ def select_window(payloads: list[dict[str, Any]], hours: int) -> list[dict[str, 
         return []
     cutoff = parse_dt(payloads[-1].get("generated_at_utc")) - timedelta(hours=max(hours, 1))
     return [payload for payload in payloads if parse_dt(payload.get("generated_at_utc")) >= cutoff]
+
+
+def observed_window_label(payloads: list[dict[str, Any]], requested_hours: int) -> str | None:
+    if len(payloads) < 2:
+        return None
+    first = parse_dt(payloads[0].get("generated_at_utc"))
+    latest = parse_dt(payloads[-1].get("generated_at_utc"))
+    observed_hours = max((latest - first).total_seconds() / 3600, 0)
+    if observed_hours + 0.05 < requested_hours:
+        return f"{observed_hours:.1f}h disponibili su {requested_hours}h richieste"
+    return f"{observed_hours:.1f}h"
+
+
+def disk_growth_for_window(payloads: list[dict[str, Any]]) -> float | None:
+    if len(payloads) < 2:
+        return None
+    first_used = as_float(nested(payloads[0], "server_disk", "used_bytes"))
+    latest_used = as_float(nested(payloads[-1], "server_disk", "used_bytes"))
+    if first_used is None or latest_used is None:
+        return None
+    return round((latest_used - first_used) / (1024 * 1024), 2)
+
+
+def window_growth_rows(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if len(payloads) < 2:
+        return []
+    first_apps = apps_by_id(payloads[0])
+    latest_apps = apps_by_id(payloads[-1])
+    hours = max((parse_dt(payloads[-1].get("generated_at_utc")) - parse_dt(payloads[0].get("generated_at_utc"))).total_seconds() / 3600, 0.001)
+    rows = []
+    for app_id, latest_app in latest_apps.items():
+        first_app = first_apps.get(app_id)
+        if not first_app:
+            continue
+        bucket_deltas = bucket_deltas_between(first_app, latest_app)
+        total_bytes = bucket_deltas.get("total", 0)
+        if total_bytes <= 0:
+            continue
+        main_bucket = main_growth_bucket(bucket_deltas)
+        total_mb = bytes_to_mb(total_bytes)
+        rows.append(
+            {
+                "app_id": app_id,
+                "total_mb": total_mb,
+                "growth_rate_mb_per_hour": round(total_mb / hours, 2),
+                "main_growth_bucket": main_bucket,
+                "labels": labels_for_bucket(main_bucket),
+                "suspicion_score": latest_app.get("suspicion_score", 0),
+            }
+        )
+    rows.sort(key=lambda item: (-(item.get("total_mb") or 0), item.get("app_id") or ""))
+    return rows
+
+
+def apps_by_id(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {str(app.get("app_id")): app for app in payload.get("apps") or [] if app.get("app_id")}
+
+
+def bucket_deltas_between(first_app: dict[str, Any], latest_app: dict[str, Any]) -> dict[str, int]:
+    first_sizes = first_app.get("sizes_bytes") or {}
+    latest_sizes = latest_app.get("sizes_bytes") or {}
+    keys = set(first_sizes) | set(latest_sizes)
+    return {key: int(latest_sizes.get(key, 0) or 0) - int(first_sizes.get(key, 0) or 0) for key in keys}
+
+
+def main_growth_bucket(deltas: dict[str, int]) -> str | None:
+    ignored = {"total", "public_html", "wp_content"}
+    positives = [(key, value) for key, value in deltas.items() if key not in ignored and value > 0]
+    if not positives:
+        return None
+    positives.sort(key=lambda item: (-item[1], item[0]))
+    return positives[0][0]
+
+
+def labels_for_bucket(bucket: str | None) -> list[str]:
+    return {
+        "logs": ["log_growth"],
+        "cache": ["cache_growth"],
+        "uploads": ["upload_growth"],
+        "wpallimport": ["wpallimport_growth"],
+        "local_backups": ["backup_accumulation"],
+        "tmp": ["tmp_growth"],
+        "debug_log": ["debug_log_large"],
+    }.get(bucket or "", [])
 
 
 def total_positive_growth(payload: dict[str, Any], delta_key: str) -> float:
@@ -433,6 +531,15 @@ def bytes_to_gb(value: Any) -> str:
         return str(round(value / (1024 * 1024 * 1024), 2))
     except TypeError:
         return "n/a"
+
+
+def format_mb_or_gb(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    sign = "+" if value > 0 else ""
+    if abs(value) >= 1024:
+        return f"{sign}{round(value / 1024, 2)} GB"
+    return f"{sign}{round(value, 2)} MB"
 
 
 def fmt(value: Any) -> str:
