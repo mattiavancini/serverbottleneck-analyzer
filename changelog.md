@@ -45,6 +45,25 @@ Riordinato il blocco iniziale della dashboard in modo piu naturale:
 
 Il miglioramento della leggibilita resta un lavoro aperto, ma la priorita di questa modifica e rendere disponibile subito il delta osservato.
 
+### Aggiornamento dashboard 7 giorni
+
+Ulteriore revisione della schermata principale:
+
+- default dashboard portato a `168h` / 7 giorni
+- rimosso il concetto ambiguo di "Periodo ultime 24h" dalla vista iniziale
+- aggiunta visualizzazione a due colonne con primo e ultimo snapshot disponibili
+- aggiunta barra di riempimento della finestra dati 7 giorni
+- `Disk growth` chiarito come crescita dal primo snapshot della finestra
+- load/RAM/swap mostrati come media e picco della finestra selezionata
+- trend testuali resi piu larghi e capaci di occupare due righe
+- top storage growth in dashboard aumentato da 5 a 15 app
+- top storage growth di dettaglio aumentato a 30 app
+
+Nota operativa:
+
+- quando la finestra 7 giorni non e ancora piena, il dashboard mostra quante ore reali sono disponibili
+- il 100% della barra indica che abbiamo coperto l'intera retention target di 7 giorni
+
 ## 2026-05-27 - Storage Growth Analyzer e dashboard SSH per WP_Q
 
 ### Contesto

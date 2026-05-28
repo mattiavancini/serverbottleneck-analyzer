@@ -10,6 +10,11 @@ from pathlib import Path
 from typing import Any
 
 BLOCKS = "▁▂▃▄▅▆▇█"
+DEFAULT_WINDOW_HOURS = 168
+TOP_DASHBOARD_LIMIT = 15
+TOP_DETAIL_LIMIT = 30
+TREND_WIDTH = 72
+TREND_MAX_POINTS = 144
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -25,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--data-dir", type=Path, default=Path("../data"), help="Directory containing analyzer reports")
     parser.add_argument("--server", help="Server to show first")
-    parser.add_argument("--hours", type=int, default=24, help="Default dashboard lookback window")
+    parser.add_argument("--hours", type=int, default=DEFAULT_WINDOW_HOURS, help="Default dashboard lookback window")
     parser.add_argument("--once", action="store_true", help="Print dashboard once and exit")
     return parser
 
@@ -96,58 +101,60 @@ def print_dashboard(data_dir: Path, server: str, hours: int) -> None:
     selected_storage = select_window(storage, hours)
     selected_inspections = select_window(inspections, hours)
     observed_label = observed_window_label(selected_storage, hours)
+    observed_hours = observed_window_hours(selected_storage)
     latest_inspection = inspections[-1] if inspections else {}
+    first_storage = selected_storage[0] if selected_storage else {}
+    first_inspection = selected_inspections[0] if selected_inspections else {}
     disk = latest_storage.get("server_disk") or {}
     disk_growth_mb = disk_growth_for_window(selected_storage)
     snapshot = latest_inspection.get("server_snapshot") if isinstance(latest_inspection.get("server_snapshot"), dict) else {}
     cpu_count = as_float(snapshot.get("cpu_count")) or as_float(os.cpu_count()) or 1.0
-    latest_load = first_load(latest_inspection)
-    latest_ram_used = as_float(snapshot.get("ram_used_mb"))
     latest_ram_total = as_float(snapshot.get("ram_total_mb"))
-    latest_swap_used = as_float(snapshot.get("swap_used_mb"))
     latest_swap_total = as_float(snapshot.get("swap_total_mb"))
     load_values = [first_load(item) for item in selected_inspections]
+    load_reference = avg_number(load_values)
     ram_values = [nested(item, "server_snapshot", "ram_used_mb") for item in selected_inspections]
+    ram_total = latest_ram_total or last_number([nested(item, "server_snapshot", "ram_total_mb") for item in selected_inspections])
+    swap_values = [nested(item, "server_snapshot", "swap_used_mb") for item in selected_inspections]
+    swap_total = latest_swap_total or last_number([nested(item, "server_snapshot", "swap_total_mb") for item in selected_inspections])
     disk_values = [nested(item, "server_disk", "used_pct") for item in selected_storage]
     php_fpm_values = [nested(item, "server_snapshot", "php_fpm_process_count") for item in selected_inspections]
 
     print(f"SERVER BOTTLENECK ANALYZER - {server}")
     print("")
-    print(f"Periodo: ultime {hours}h")
-    if observed_label:
-        print(f"Finestra dati: {observed_label}")
-    print(f"Ultimo storage snapshot: {latest_storage.get('generated_at_utc', 'n/a')}")
-    print(f"Ultimo performance snapshot: {latest_inspection.get('generated_at_utc', 'n/a')}")
+    print(f"Finestra target: ultimi {format_hours(hours)}")
+    print_snapshot_columns(first_storage, latest_storage, first_inspection, latest_inspection)
+    print_window_progress(observed_hours, hours, observed_label)
     print("")
     print("SERVER STATUS")
     print(f"CPU cores:      {int(cpu_count)}")
     print(
-        f"Load avg:       {avg(load_values)} avg / {peak(load_values)} peak   "
-        f"{load_bar(latest_load, cpu_count)} {load_status(latest_load, cpu_count)}"
+        f"Load avg:       {avg(load_values)} media / {peak(load_values)} picco   "
+        f"{load_bar(load_reference, cpu_count)} {load_status(load_reference, cpu_count)}"
     )
-    print("                 scale: 1.00/core = CPU slots busy; >1.50/core = high queue")
+    print("                 scala: 1.00/core = CPU occupata; >1.50/core = coda alta")
     print(
-        f"RAM used:       {avg(ram_values)} MB avg / {peak(ram_values)} MB peak   "
-        f"{bar(percent(latest_ram_used, latest_ram_total), 100)} {fmt_pct(percent(latest_ram_used, latest_ram_total))}"
+        f"RAM used:       {avg(ram_values)} MB media / {peak(ram_values)} MB picco   "
+        f"{bar(percent(avg_number(ram_values), ram_total), 100)} {fmt_pct(percent(avg_number(ram_values), ram_total))}"
     )
-    if latest_swap_total and latest_swap_total > 0:
+    if swap_total and swap_total > 0:
         print(
-            f"Swap used:      {fmt(latest_swap_used)} MB / {fmt(latest_swap_total)} MB   "
-            f"{bar(percent(latest_swap_used, latest_swap_total), 100)} {fmt_pct(percent(latest_swap_used, latest_swap_total))}"
+            f"Swap used:      {avg(swap_values)} MB media / {peak(swap_values)} MB picco   "
+            f"{bar(percent(avg_number(swap_values), swap_total), 100)} {fmt_pct(percent(avg_number(swap_values), swap_total))}"
         )
     print(
         f"Disk used:      {bytes_to_gb(disk.get('used_bytes'))} GB / {bytes_to_gb(disk.get('total_bytes'))} GB"
         f"   {bar(as_float(disk.get('used_pct')), 100)} {fmt(disk.get('used_pct'))}%"
     )
     print(f"Disk free:      {bytes_to_gb(disk.get('free_bytes'))} GB")
-    print(f"Disk growth:    {format_mb_or_gb(disk_growth_mb)} / {observed_label or 'previous snapshot'}")
-    print(f"PHP-FPM proc:   {avg(php_fpm_values)} avg / {peak(php_fpm_values)} peak")
+    print(f"Disk growth:    {format_mb_or_gb(disk_growth_mb)} dal primo snapshot della finestra")
+    print(f"PHP-FPM proc:   {avg(php_fpm_values)} media / {peak(php_fpm_values)} picco")
     print(f"Redis:          {nested(latest_inspection, 'server_snapshot', 'redis_status') or 'n/a'}")
     print("")
     print("TREND")
-    print(f"Load:  {sparkline(load_values)}")
-    print(f"RAM:   {sparkline(ram_values)}")
-    print(f"Disk:  {sparkline(disk_values)}")
+    print_trend("Load", load_values)
+    print_trend("RAM", ram_values)
+    print_trend("Disk", disk_values)
     print("")
     print("TOP STORAGE GROWTH")
     rows = window_growth_rows(selected_storage)
@@ -155,7 +162,7 @@ def print_dashboard(data_dir: Path, server: str, hours: int) -> None:
         rows = (latest_storage.get("rankings") or {}).get("top_growth_apps") or []
     if not rows:
         print("none")
-    for index, row in enumerate(rows[:5], start=1):
+    for index, row in enumerate(rows[:TOP_DASHBOARD_LIMIT], start=1):
         print(
             f"{index}. {row.get('app_id')}  +{row.get('total_mb', 0)} MB  "
             f"{row.get('main_growth_bucket') or '-'}  score={row.get('suspicion_score', 0)}"
@@ -180,7 +187,7 @@ def show_growth(data_dir: Path, server: str, hours: int) -> None:
         rows = (latest.get("rankings") or {}).get("top_growth_apps") or []
     if not rows:
         print("none")
-    for row in rows[:20]:
+    for row in rows[:TOP_DETAIL_LIMIT]:
         print(
             f"{row.get('app_id')}  +{row.get('total_mb', 0)} MB  "
             f"rate={row.get('growth_rate_mb_per_hour', 0)} MB/h  "
@@ -312,15 +319,58 @@ def select_window(payloads: list[dict[str, Any]], hours: int) -> list[dict[str, 
     return [payload for payload in payloads if parse_dt(payload.get("generated_at_utc")) >= cutoff]
 
 
-def observed_window_label(payloads: list[dict[str, Any]], requested_hours: int) -> str | None:
+def print_snapshot_columns(
+    first_storage: dict[str, Any],
+    latest_storage: dict[str, Any],
+    first_inspection: dict[str, Any],
+    latest_inspection: dict[str, Any],
+) -> None:
+    left_width = 40
+    print(f"{'PRIMO SNAPSHOT':<{left_width}}ULTIMO SNAPSHOT")
+    print(
+        f"{('storage:     ' + compact_dt(first_storage.get('generated_at_utc'))):<{left_width}}"
+        f"storage:     {compact_dt(latest_storage.get('generated_at_utc'))}"
+    )
+    print(
+        f"{('performance: ' + compact_dt(first_inspection.get('generated_at_utc'))):<{left_width}}"
+        f"performance: {compact_dt(latest_inspection.get('generated_at_utc'))}"
+    )
+
+
+def print_window_progress(observed_hours: float | None, requested_hours: int, observed_label: str | None) -> None:
+    if observed_hours is None:
+        print(f"Finestra dati: nessun confronto disponibile / target {format_hours(requested_hours)}")
+        print(f"Riempimento:   {bar(0, 100, width=36)} 0.0%")
+        return
+    pct = min(max((observed_hours / max(requested_hours, 1)) * 100, 0.0), 100.0)
+    print(f"Finestra dati: {observed_label or format_hours(observed_hours)}")
+    print(f"Riempimento:   {bar(pct, 100, width=36)} {round(pct, 1)}% del target")
+
+
+def compact_dt(value: Any) -> str:
+    if not value:
+        return "n/a"
+    parsed = parse_dt(value)
+    if parsed.timestamp() <= 0:
+        return str(value)
+    return parsed.strftime("%Y-%m-%d %H:%M UTC")
+
+
+def observed_window_hours(payloads: list[dict[str, Any]]) -> float | None:
     if len(payloads) < 2:
         return None
     first = parse_dt(payloads[0].get("generated_at_utc"))
     latest = parse_dt(payloads[-1].get("generated_at_utc"))
-    observed_hours = max((latest - first).total_seconds() / 3600, 0)
+    return max((latest - first).total_seconds() / 3600, 0)
+
+
+def observed_window_label(payloads: list[dict[str, Any]], requested_hours: int) -> str | None:
+    observed_hours = observed_window_hours(payloads)
+    if observed_hours is None:
+        return None
     if observed_hours + 0.05 < requested_hours:
-        return f"{observed_hours:.1f}h disponibili su {requested_hours}h richieste"
-    return f"{observed_hours:.1f}h"
+        return f"{format_hours(observed_hours)} disponibili su {format_hours(requested_hours)} target"
+    return format_hours(observed_hours)
 
 
 def disk_growth_for_window(payloads: list[dict[str, Any]]) -> float | None:
@@ -428,9 +478,10 @@ def nested(payload: dict[str, Any], *keys: str) -> Any:
 
 
 def sparkline(values: list[Any]) -> str:
-    numbers = [as_float(value) for value in values if as_float(value) is not None]
+    numbers = normalize_numbers(values)
     if not numbers:
         return "n/a"
+    numbers = downsample(numbers, TREND_MAX_POINTS)
     if len(numbers) == 1:
         return BLOCKS[-1]
     low = min(numbers)
@@ -442,6 +493,34 @@ def sparkline(values: list[Any]) -> str:
         index = int(round(((value - low) / (high - low)) * (len(BLOCKS) - 1)))
         output.append(BLOCKS[index])
     return "".join(output)
+
+
+def print_trend(label: str, values: list[Any]) -> None:
+    line = sparkline(values)
+    if line == "n/a":
+        print(f"{label:<5} n/a")
+        return
+    chunks = [line[index:index + TREND_WIDTH] for index in range(0, len(line), TREND_WIDTH)]
+    for index, chunk in enumerate(chunks[:2]):
+        prefix = f"{label:<5} " if index == 0 else "      "
+        print(f"{prefix}{chunk}")
+
+
+def normalize_numbers(values: list[Any]) -> list[float]:
+    return [number for value in values if (number := as_float(value)) is not None]
+
+
+def downsample(values: list[float], max_points: int) -> list[float]:
+    if len(values) <= max_points:
+        return values
+    step = len(values) / max_points
+    sampled = []
+    for index in range(max_points):
+        start = int(index * step)
+        end = int((index + 1) * step)
+        bucket = values[start:max(end, start + 1)]
+        sampled.append(sum(bucket) / len(bucket))
+    return sampled
 
 
 def bar(value: float | None, maximum: float, width: int = 18) -> str:
@@ -483,17 +562,31 @@ def fmt_pct(value: float | None) -> str:
 
 
 def avg(values: list[Any]) -> str:
-    numbers = [as_float(value) for value in values if as_float(value) is not None]
+    numbers = normalize_numbers(values)
     if not numbers:
         return "n/a"
     return str(round(sum(numbers) / len(numbers), 2))
 
 
 def peak(values: list[Any]) -> str:
-    numbers = [as_float(value) for value in values if as_float(value) is not None]
+    numbers = normalize_numbers(values)
     if not numbers:
         return "n/a"
     return str(round(max(numbers), 2))
+
+
+def avg_number(values: list[Any]) -> float | None:
+    numbers = normalize_numbers(values)
+    if not numbers:
+        return None
+    return round(sum(numbers) / len(numbers), 2)
+
+
+def last_number(values: list[Any]) -> float | None:
+    numbers = normalize_numbers(values)
+    if not numbers:
+        return None
+    return numbers[-1]
 
 
 def as_float(value: Any) -> float | None:
@@ -540,6 +633,18 @@ def format_mb_or_gb(value: float | None) -> str:
     if abs(value) >= 1024:
         return f"{sign}{round(value / 1024, 2)} GB"
     return f"{sign}{round(value, 2)} MB"
+
+
+def format_hours(value: int | float) -> str:
+    if value >= 168 and float(value).is_integer():
+        return f"{int(value // 24)} giorni"
+    if value >= 24 and value % 24 == 0:
+        return f"{int(value // 24)} giorni"
+    if value >= 24:
+        return f"{round(value / 24, 1)} giorni"
+    if float(value).is_integer():
+        return f"{int(value)}h"
+    return f"{value:.1f}h"
 
 
 def fmt(value: Any) -> str:

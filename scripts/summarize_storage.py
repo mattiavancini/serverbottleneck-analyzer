@@ -7,6 +7,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+DEFAULT_WINDOW_HOURS = 168
+TOP_ROWS_LIMIT = 30
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -21,7 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--data-dir", type=Path, default=Path("../data"), help="Directory containing <server>/<date>/storage-*.json")
     parser.add_argument("--server", help="Server name, for example wp-x")
-    parser.add_argument("--hours", type=int, default=24, help="Lookback window in hours for trend summaries")
+    parser.add_argument("--hours", type=int, default=DEFAULT_WINDOW_HOURS, help="Lookback window in hours for trend summaries")
     parser.add_argument("--app", help="Show details for one app_id")
     parser.add_argument("--only-suspects", action="store_true", help="Show only top suspects from the latest storage snapshot")
     return parser
@@ -108,7 +111,7 @@ def print_rows(rows: list[dict[str, Any]]) -> None:
     if not rows:
         print("- none")
         return
-    for row in rows[:10]:
+    for row in rows[:TOP_ROWS_LIMIT]:
         print(
             "- "
             f"{row.get('app_id')} +{row.get('total_mb', 0)} MB "
