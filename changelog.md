@@ -94,6 +94,12 @@ Rifinita la leggibilita della dashboard SSH:
 
 Nota operativa: la profondita aggiuntiva compare pienamente solo dai nuovi snapshot raccolti dopo questo aggiornamento.
 
+### Rifinitura menu Dettaglio app
+
+- rimossa la sezione `Sizes`, ormai ridondante rispetto a `Tree` e `Top directories`
+- `Top directories` ora fonde directory raccolte e bucket noti dell'app, quindi mostra anche voci come `cache`, `uploads`, `wpallimport` e `local_backups`
+- il dettaglio app resta organizzato in tre blocchi: `Tree`, `Top directories`, `Top files`
+
 ## 2026-05-27 - Storage Growth Analyzer e dashboard SSH per WP_Q
 
 ### Contesto

@@ -234,14 +234,10 @@ def show_app_detail(data_dir: Path, server: str) -> None:
     for line in render_app_tree(app):
         print(line)
     print("")
-    print("Sizes")
-    for key, value in sorted((app.get("sizes_bytes") or {}).items()):
-        print(f"{key:14} {bytes_to_mb(value)} MB")
-    print("")
     print("Top directories")
-    top_dirs = sorted(app.get("top_directories") or [], key=lambda item: (-(item.get("size_bytes") or 0), item.get("path") or ""))
-    for item in top_dirs[:15]:
-        print(f"{item.get('size_mb')} MB  {item.get('path')}")
+    top_dirs = app_directory_rows(app)
+    for item in top_dirs[:TOP_DETAIL_LIMIT]:
+        print(f"{bytes_to_mb(item.get('size_bytes'))} MB  {item.get('path')}")
     print("")
     print(f"Top files ({TOP_APP_FILES_LIMIT})")
     top_file_rows = sorted(app.get("top_files") or [], key=lambda item: (-(item.get("size_bytes") or 0), item.get("path") or ""))
@@ -251,6 +247,29 @@ def show_app_detail(data_dir: Path, server: str) -> None:
 
 def render_app_tree(app: dict[str, Any]) -> list[str]:
     app_id = str(app.get("app_id") or "app")
+    app_root = normalize_path(app.get("app_root") or "")
+    nodes = app_directory_nodes(app, infer_parents=True)
+    root_size = int((app.get("sizes_bytes") or {}).get("total") or 0)
+    lines = [f"{app_id}/".ljust(58) + format_tree_size(root_size)]
+    if not nodes:
+        lines.append("  nessuna directory pesante disponibile nello snapshot")
+        return lines
+
+    main_path = main_tree_path(app, nodes)
+    render_children(app_root, "", lines, nodes, main_path, depth=0)
+    if len(lines) > TREE_MAX_LINES:
+        return lines[:TREE_MAX_LINES] + ["  ... albero abbreviato: usa Top directories per la lista completa"]
+    return lines
+
+
+def app_directory_rows(app: dict[str, Any]) -> list[dict[str, Any]]:
+    nodes = app_directory_nodes(app, infer_parents=False)
+    rows = [{"path": path, "size_bytes": size} for path, size in nodes.items()]
+    rows.sort(key=lambda item: (-(item.get("size_bytes") or 0), item.get("path") or ""))
+    return rows
+
+
+def app_directory_nodes(app: dict[str, Any], infer_parents: bool) -> dict[str, int]:
     app_root = normalize_path(app.get("app_root") or "")
     sizes = app.get("sizes_bytes") or {}
     paths = app.get("paths") or {}
@@ -266,30 +285,22 @@ def render_app_tree(app: dict[str, Any]) -> list[str]:
         if size <= 0:
             return
         nodes[path] = max(nodes.get(path, 0), size)
+        if not infer_parents:
+            return
         parent = path.rsplit("/", 1)[0]
         while parent and parent != app_root and parent.startswith(app_root.rstrip("/") + "/"):
             nodes[parent] = max(nodes.get(parent, 0), size)
             parent = parent.rsplit("/", 1)[0]
 
     for key, path in paths.items():
-        if key == "debug_log":
+        if key in {"total", "debug_log"}:
             continue
         add_node(path, sizes.get(key))
 
     for item in app.get("top_directories") or []:
         add_node(item.get("path"), item.get("size_bytes"))
 
-    root_size = int(sizes.get("total") or 0)
-    lines = [f"{app_id}/".ljust(58) + format_tree_size(root_size)]
-    if not nodes:
-        lines.append("  nessuna directory pesante disponibile nello snapshot")
-        return lines
-
-    main_path = main_tree_path(app, nodes)
-    render_children(app_root, "", lines, nodes, main_path, depth=0)
-    if len(lines) > TREE_MAX_LINES:
-        return lines[:TREE_MAX_LINES] + ["  ... albero abbreviato: usa Top directories per la lista completa"]
-    return lines
+    return nodes
 
 
 def render_children(
