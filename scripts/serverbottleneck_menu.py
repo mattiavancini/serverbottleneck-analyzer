@@ -15,6 +15,9 @@ TOP_DASHBOARD_LIMIT = 15
 TOP_DETAIL_LIMIT = 30
 TREND_WIDTH = 72
 TREND_MAX_POINTS = 144
+TABLE_WIDTH = 98
+STATUS_LABEL_WIDTH = 16
+STATUS_VALUE_WIDTH = TABLE_WIDTH - STATUS_LABEL_WIDTH - 7
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -122,41 +125,28 @@ def print_dashboard(data_dir: Path, server: str, hours: int) -> None:
 
     print(f"SERVER BOTTLENECK ANALYZER - {server}")
     print("")
-    print(f"Finestra target: ultimi {format_hours(hours)}")
-    print_snapshot_columns(first_storage, latest_storage, first_inspection, latest_inspection)
-    print_window_progress(observed_hours, hours, observed_label)
+    print_window_table(hours, first_storage, latest_storage, first_inspection, latest_inspection, observed_hours, observed_label)
     print("")
-    print("SERVER STATUS")
-    print(f"CPU cores:      {int(cpu_count)}")
-    print(
-        f"Load avg:       {avg(load_values)} media / {peak(load_values)} picco   "
-        f"{load_bar(load_reference, cpu_count)} {load_status(load_reference, cpu_count)}"
+    print_status_table(
+        cpu_count=cpu_count,
+        load_values=load_values,
+        load_reference=load_reference,
+        ram_values=ram_values,
+        ram_total=ram_total,
+        swap_values=swap_values,
+        swap_total=swap_total,
+        disk=disk,
+        disk_growth_mb=disk_growth_mb,
+        php_fpm_values=php_fpm_values,
+        redis_status=nested(latest_inspection, "server_snapshot", "redis_status") or "n/a",
     )
-    print("                 scala: 1.00/core = CPU occupata; >1.50/core = coda alta")
-    print(
-        f"RAM used:       {avg(ram_values)} MB media / {peak(ram_values)} MB picco   "
-        f"{bar(percent(avg_number(ram_values), ram_total), 100)} {fmt_pct(percent(avg_number(ram_values), ram_total))}"
-    )
-    if swap_total and swap_total > 0:
-        print(
-            f"Swap used:      {avg(swap_values)} MB media / {peak(swap_values)} MB picco   "
-            f"{bar(percent(avg_number(swap_values), swap_total), 100)} {fmt_pct(percent(avg_number(swap_values), swap_total))}"
-        )
-    print(
-        f"Disk used:      {bytes_to_gb(disk.get('used_bytes'))} GB / {bytes_to_gb(disk.get('total_bytes'))} GB"
-        f"   {bar(as_float(disk.get('used_pct')), 100)} {fmt(disk.get('used_pct'))}%"
-    )
-    print(f"Disk free:      {bytes_to_gb(disk.get('free_bytes'))} GB")
-    print(f"Disk growth:    {format_mb_or_gb(disk_growth_mb)} dal primo snapshot della finestra")
-    print(f"PHP-FPM proc:   {avg(php_fpm_values)} media / {peak(php_fpm_values)} picco")
-    print(f"Redis:          {nested(latest_inspection, 'server_snapshot', 'redis_status') or 'n/a'}")
     print("")
     print("TREND")
     print_trend("Load", load_values)
     print_trend("RAM", ram_values)
     print_trend("Disk", disk_values)
     print("")
-    print("TOP STORAGE GROWTH")
+    print("TOP STORAGE GROWTH (dal primo snapshot della finestra)")
     rows = window_growth_rows(selected_storage)
     if not rows:
         rows = (latest_storage.get("rankings") or {}).get("top_growth_apps") or []
@@ -319,32 +309,68 @@ def select_window(payloads: list[dict[str, Any]], hours: int) -> list[dict[str, 
     return [payload for payload in payloads if parse_dt(payload.get("generated_at_utc")) >= cutoff]
 
 
-def print_snapshot_columns(
+def print_window_table(
+    hours: int,
     first_storage: dict[str, Any],
     latest_storage: dict[str, Any],
     first_inspection: dict[str, Any],
     latest_inspection: dict[str, Any],
+    observed_hours: float | None,
+    observed_label: str | None,
 ) -> None:
-    left_width = 40
-    print(f"{'PRIMO SNAPSHOT':<{left_width}}ULTIMO SNAPSHOT")
-    print(
-        f"{('storage:     ' + compact_dt(first_storage.get('generated_at_utc'))):<{left_width}}"
-        f"storage:     {compact_dt(latest_storage.get('generated_at_utc'))}"
-    )
-    print(
-        f"{('performance: ' + compact_dt(first_inspection.get('generated_at_utc'))):<{left_width}}"
-        f"performance: {compact_dt(latest_inspection.get('generated_at_utc'))}"
-    )
-
-
-def print_window_progress(observed_hours: float | None, requested_hours: int, observed_label: str | None) -> None:
+    col_width = (TABLE_WIDTH - 7) // 2
+    print(box_top(TABLE_WIDTH))
+    print(box_full(f"Finestra target: ultimi {format_hours(hours)}", TABLE_WIDTH))
+    print(box_mid(TABLE_WIDTH))
+    print(two_col_row("PRIMO SNAPSHOT", "ULTIMO SNAPSHOT", col_width))
+    print(two_col_row(f"storage:     {compact_dt(first_storage.get('generated_at_utc'))}", f"storage:     {compact_dt(latest_storage.get('generated_at_utc'))}", col_width))
+    print(two_col_row(f"performance: {compact_dt(first_inspection.get('generated_at_utc'))}", f"performance: {compact_dt(latest_inspection.get('generated_at_utc'))}", col_width))
+    print(box_mid(TABLE_WIDTH))
     if observed_hours is None:
-        print(f"Finestra dati: nessun confronto disponibile / target {format_hours(requested_hours)}")
-        print(f"Riempimento:   {bar(0, 100, width=36)} 0.0%")
-        return
-    pct = min(max((observed_hours / max(requested_hours, 1)) * 100, 0.0), 100.0)
-    print(f"Finestra dati: {observed_label or format_hours(observed_hours)}")
-    print(f"Riempimento:   {bar(pct, 100, width=36)} {round(pct, 1)}% del target")
+        print(box_full(f"Finestra dati: nessun confronto disponibile / target {format_hours(hours)}", TABLE_WIDTH))
+        print(box_full(f"Riempimento:   {bar(0, 100, width=52)} 0.0%", TABLE_WIDTH))
+    else:
+        pct = min(max((observed_hours / max(hours, 1)) * 100, 0.0), 100.0)
+        print(box_full(f"Finestra dati: {observed_label or format_hours(observed_hours)}", TABLE_WIDTH))
+        print(box_full(f"Riempimento:   {bar(pct, 100, width=52)} {round(pct, 1)}% del target", TABLE_WIDTH))
+    print(box_bottom(TABLE_WIDTH))
+
+
+def print_status_table(
+    cpu_count: float,
+    load_values: list[Any],
+    load_reference: float | None,
+    ram_values: list[Any],
+    ram_total: float | None,
+    swap_values: list[Any],
+    swap_total: float | None,
+    disk: dict[str, Any],
+    disk_growth_mb: float | None,
+    php_fpm_values: list[Any],
+    redis_status: str,
+) -> None:
+    print(box_top(TABLE_WIDTH))
+    print(box_full("SERVER STATUS", TABLE_WIDTH))
+    print(box_mid(TABLE_WIDTH))
+    print(status_row("CPU cores", str(int(cpu_count))))
+    print(status_row("Load avg", f"{avg(load_values)} media / {peak(load_values)} picco - {load_status(load_reference, cpu_count)}"))
+    print(status_detail(load_bar(load_reference, cpu_count, width=58)))
+    print(status_detail("scala: 1.00/core = CPU occupata; >1.50/core = coda alta"))
+    ram_pct = percent(avg_number(ram_values), ram_total)
+    print(status_row("RAM used", f"{avg(ram_values)} MB media / {peak(ram_values)} MB picco - {fmt_pct(ram_pct)}"))
+    print(status_detail(bar(ram_pct, 100, width=58)))
+    if swap_total and swap_total > 0:
+        swap_pct = percent(avg_number(swap_values), swap_total)
+        print(status_row("Swap used", f"{avg(swap_values)} MB media / {peak(swap_values)} MB picco - {fmt_pct(swap_pct)}"))
+        print(status_detail(bar(swap_pct, 100, width=58)))
+    disk_pct = as_float(disk.get("used_pct"))
+    print(status_row("Disk used", f"{bytes_to_gb(disk.get('used_bytes'))} GB / {bytes_to_gb(disk.get('total_bytes'))} GB - {fmt(disk.get('used_pct'))}%"))
+    print(status_detail(bar(disk_pct, 100, width=58)))
+    print(status_row("Disk free", f"{bytes_to_gb(disk.get('free_bytes'))} GB"))
+    print(status_row("Disk growth", f"{format_mb_or_gb(disk_growth_mb)} dal primo snapshot della finestra"))
+    print(status_row("PHP-FPM proc", f"{avg(php_fpm_values)} media / {peak(php_fpm_values)} picco"))
+    print(status_row("Redis", redis_status))
+    print(box_bottom(TABLE_WIDTH))
 
 
 def compact_dt(value: Any) -> str:
@@ -354,6 +380,41 @@ def compact_dt(value: Any) -> str:
     if parsed.timestamp() <= 0:
         return str(value)
     return parsed.strftime("%Y-%m-%d %H:%M UTC")
+
+
+def box_top(width: int) -> str:
+    return "+" + "-" * (width - 2) + "+"
+
+
+def box_mid(width: int) -> str:
+    return "+" + "-" * (width - 2) + "+"
+
+
+def box_bottom(width: int) -> str:
+    return "+" + "-" * (width - 2) + "+"
+
+
+def box_full(text: str, width: int) -> str:
+    return "| " + fit_text(text, width - 4) + " |"
+
+
+def two_col_row(left: str, right: str, col_width: int) -> str:
+    return "| " + fit_text(left, col_width) + " | " + fit_text(right, col_width) + " |"
+
+
+def status_row(label: str, value: str) -> str:
+    return "| " + fit_text(label, STATUS_LABEL_WIDTH) + " | " + fit_text(value, STATUS_VALUE_WIDTH) + " |"
+
+
+def status_detail(value: str) -> str:
+    return "| " + " " * STATUS_LABEL_WIDTH + " | " + fit_text(value, STATUS_VALUE_WIDTH) + " |"
+
+
+def fit_text(value: Any, width: int) -> str:
+    text = str(value)
+    if len(text) > width:
+        return text[: max(width - 1, 0)] + "…" if width > 1 else text[:width]
+    return text.ljust(width)
 
 
 def observed_window_hours(payloads: list[dict[str, Any]]) -> float | None:
@@ -496,7 +557,7 @@ def sparkline(values: list[Any]) -> str:
 
 
 def print_trend(label: str, values: list[Any]) -> None:
-    line = sparkline(values)
+    line = expand_sparkline(sparkline(values), TREND_WIDTH)
     if line == "n/a":
         print(f"{label:<5} n/a")
         return
@@ -504,6 +565,16 @@ def print_trend(label: str, values: list[Any]) -> None:
     for index, chunk in enumerate(chunks[:2]):
         prefix = f"{label:<5} " if index == 0 else "      "
         print(f"{prefix}{chunk}")
+
+
+def expand_sparkline(line: str, target_width: int) -> str:
+    if line == "n/a" or not line:
+        return line
+    if len(line) >= target_width:
+        return line
+    repeat = max(1, target_width // len(line))
+    expanded = "".join(char * repeat for char in line)
+    return expanded[:target_width]
 
 
 def normalize_numbers(values: list[Any]) -> list[float]:

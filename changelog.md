@@ -64,6 +64,18 @@ Nota operativa:
 - quando la finestra 7 giorni non e ancora piena, il dashboard mostra quante ore reali sono disponibili
 - il 100% della barra indica che abbiamo coperto l'intera retention target di 7 giorni
 
+### Aggiornamento layout tabellare
+
+Rifinita la leggibilita della dashboard SSH:
+
+- sezione finestra dati dentro tabella ASCII
+- due colonne per primo/ultimo snapshot
+- riga unica a tutta larghezza per avanzamento retention
+- sezione `SERVER STATUS` dentro tabella ASCII
+- barre metriche spostate sotto il valore della metrica
+- trend `Load`, `RAM`, `Disk` espansi in larghezza per essere piu leggibili
+- chiarito il titolo `TOP STORAGE GROWTH (dal primo snapshot della finestra)`
+
 ## 2026-05-27 - Storage Growth Analyzer e dashboard SSH per WP_Q
 
 ### Contesto
