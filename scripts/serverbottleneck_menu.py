@@ -15,6 +15,7 @@ TOP_DASHBOARD_LIMIT = 15
 TOP_DETAIL_LIMIT = 30
 TREND_WIDTH = 72
 TREND_MAX_POINTS = 144
+TREND_HEIGHT = 2
 TABLE_WIDTH = 98
 STATUS_LABEL_WIDTH = 16
 STATUS_VALUE_WIDTH = TABLE_WIDTH - STATUS_LABEL_WIDTH - 7
@@ -155,7 +156,7 @@ def print_dashboard(data_dir: Path, server: str, hours: int) -> None:
     for index, row in enumerate(rows[:TOP_DASHBOARD_LIMIT], start=1):
         print(
             f"{index}. {row.get('app_id')}  +{row.get('total_mb', 0)} MB  "
-            f"{row.get('main_growth_bucket') or '-'}  score={row.get('suspicion_score', 0)}"
+            f"{row.get('main_growth_bucket') or '-'}"
         )
 
 
@@ -224,7 +225,8 @@ def show_app_detail(data_dir: Path, server: str) -> None:
         return
     print(f"APP DETAIL - {server}/{app_id}")
     print("")
-    print(f"Score: {app.get('suspicion_score', 0)}")
+    print(f"Storage score: {app.get('suspicion_score', 0)}")
+    print("Nota: lo storage score e solo un indicatore storage dell'ultimo snapshot; non include ancora performance/PHP.")
     print(f"Labels: {', '.join(app.get('labels') or [])}")
     print("")
     print("Sizes")
@@ -560,11 +562,14 @@ def print_trend(label: str, values: list[Any]) -> None:
     line = expand_sparkline(sparkline(values), TREND_WIDTH)
     if line == "n/a":
         print(f"{label:<5} n/a")
+        print("")
         return
     chunks = [line[index:index + TREND_WIDTH] for index in range(0, len(line), TREND_WIDTH)]
-    for index, chunk in enumerate(chunks[:2]):
-        prefix = f"{label:<5} " if index == 0 else "      "
-        print(f"{prefix}{chunk}")
+    for chunk_index, chunk in enumerate(chunks[:2]):
+        for height_index in range(TREND_HEIGHT):
+            prefix = f"{label:<5} " if chunk_index == 0 and height_index == 0 else "      "
+            print(f"{prefix}{chunk}")
+    print("")
 
 
 def expand_sparkline(line: str, target_width: int) -> str:

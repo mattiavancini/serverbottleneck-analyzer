@@ -76,6 +76,13 @@ Rifinita la leggibilita della dashboard SSH:
 - trend `Load`, `RAM`, `Disk` espansi in larghezza per essere piu leggibili
 - chiarito il titolo `TOP STORAGE GROWTH (dal primo snapshot della finestra)`
 
+### Chiarimento score e trend
+
+- rimosso `score` dalla lista principale `TOP STORAGE GROWTH`, perche poteva confondere con un rischio combinato
+- nel dettaglio app lo score viene mostrato come `Storage score`
+- aggiunta nota: lo storage score e solo storage e non include ancora performance/PHP
+- trend resi piu leggibili con doppia altezza e spazio tra Load/RAM/Disk
+
 ## 2026-05-27 - Storage Growth Analyzer e dashboard SSH per WP_Q
 
 ### Contesto
