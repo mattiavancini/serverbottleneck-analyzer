@@ -117,6 +117,15 @@ Nota operativa: la profondita aggiuntiva compare pienamente solo dai nuovi snaps
 - gestione larghezza tabelle aggiornata per non rompere i bordi quando i colori sono attivi
 - lo stile titoli/etichette e applicato alle schermate principali del menu SSH
 
+### Classifica peso app e barre colorate
+
+- aggiunto in dashboard `APP SIZE TREE`, tra trend e crescita storage
+- `APP SIZE TREE` ordina le app per dimensione totale nell'ultimo snapshot e mostra la top 30 di tutte le app raccolte
+- aggiunta riga aggregata per le app non mostrate quando il server ha piu di 30 app
+- menu `Top directories` e `Top files` chiariti come viste top 30 dell'ultimo snapshot
+- tutte le barre percentuali usano ora soglie colore: primo 30% lime, dal 31% al 70% arancio, ultimo 30% rosso
+- la logica colore e centralizzata nella funzione `bar`, quindi vale per riempimento finestra, load, RAM, swap e disco
+
 ## 2026-05-27 - Storage Growth Analyzer e dashboard SSH per WP_Q
 
 ### Contesto

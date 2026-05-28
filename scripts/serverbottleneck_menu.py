@@ -15,16 +15,21 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 COLOR_ENABLED = sys.stdout.isatty() and not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"
 YELLOW = "1;33"
 GREEN = "32"
+LIME = "92"
+ORANGE = "38;5;208"
+RED = "31"
 DEFAULT_WINDOW_HOURS = 168
 TOP_DASHBOARD_LIMIT = 15
 TOP_DETAIL_LIMIT = 30
 TOP_APP_FILES_LIMIT = 10
+TOP_APP_SIZE_LIMIT = 30
 TREND_WIDTH = 72
 TREE_CHILD_LIMIT = 8
 TREE_MAX_LINES = 90
 TABLE_WIDTH = 98
 STATUS_LABEL_WIDTH = 16
 STATUS_VALUE_WIDTH = TABLE_WIDTH - STATUS_LABEL_WIDTH - 7
+STATUS_BAR_WIDTH = 56
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -153,6 +158,8 @@ def print_dashboard(data_dir: Path, server: str, hours: int) -> None:
     print_trend("RAM", ram_values)
     print_trend("Disk", disk_values)
     print("")
+    print_app_size_tree(latest_storage, server)
+    print("")
     print(title("TOP STORAGE GROWTH (dal primo snapshot della finestra)"))
     rows = window_growth_rows(selected_storage)
     if not rows:
@@ -225,18 +232,53 @@ def print_growth_legend() -> None:
     print(intro("labels", "classificazione automatica del tipo di problema probabile"))
 
 
+def print_app_size_tree(latest_storage: dict[str, Any], server: str) -> None:
+    rows = app_size_rows(latest_storage)
+    total_apps = len(rows)
+    if not rows:
+        print(title("APP SIZE TREE"))
+        print("none")
+        return
+    shown = rows[:TOP_APP_SIZE_LIMIT]
+    root_size = sum(row["size_bytes"] for row in rows)
+    print(title(f"APP SIZE TREE (ultimo snapshot, top {len(shown)} di {total_apps} app per dimensione)"))
+    print(intro("Stai vedendo", "classifica delle app piu pesanti; il tree si ferma al nome app."))
+    print(f"{server}/".ljust(58) + format_tree_size(root_size))
+    for index, row in enumerate(shown):
+        is_last = index == len(shown) - 1 and len(shown) == total_apps
+        connector = "`-- " if is_last else "|-- "
+        label = f"{connector}{row['app_id']}/"
+        print(label.ljust(58) + format_tree_size(row["size_bytes"]))
+    if total_apps > len(shown):
+        remaining = total_apps - len(shown)
+        remaining_size = sum(row["size_bytes"] for row in rows[len(shown) :])
+        print(f"`-- ... altre {remaining} app".ljust(58) + format_tree_size(remaining_size))
+
+
+def app_size_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = []
+    for app in payload.get("apps") or []:
+        app_id = app.get("app_id")
+        size = int((app.get("sizes_bytes") or {}).get("total") or 0)
+        if not app_id:
+            continue
+        rows.append({"app_id": str(app_id), "size_bytes": size})
+    rows.sort(key=lambda row: (-row["size_bytes"], row["app_id"]))
+    return rows
+
+
 def show_top_directories(data_dir: Path, server: str) -> None:
     latest = latest_payload(data_dir, server, "storage-*.json")
     clear_screen()
     print(title(f"TOP DIRECTORIES - {server}"))
-    print(intro("Stai vedendo", "le directory piu pesanti trovate nell'ultimo snapshot storage."))
+    print(intro("Stai vedendo", f"le prime {TOP_DETAIL_LIMIT} directory piu pesanti trovate nell'ultimo snapshot storage."))
     print("")
     rows = []
     for app in latest.get("apps") or []:
         for item in app.get("top_directories") or []:
             rows.append({"app_id": app.get("app_id"), **item})
     rows.sort(key=lambda item: (-(item.get("size_bytes") or 0), item.get("app_id") or "", item.get("path") or ""))
-    for item in rows[:30]:
+    for item in rows[:TOP_DETAIL_LIMIT]:
         print(f"{item.get('app_id')}  {item.get('size_mb')} MB  {item.get('path')}")
     if not rows:
         print("none")
@@ -246,10 +288,10 @@ def show_top_files(data_dir: Path, server: str) -> None:
     latest = latest_payload(data_dir, server, "storage-*.json")
     clear_screen()
     print(title(f"TOP FILES - {server}"))
-    print(intro("Stai vedendo", "i file piu grandi trovati nell'ultimo snapshot storage."))
+    print(intro("Stai vedendo", f"i primi {TOP_DETAIL_LIMIT} file piu grandi trovati nell'ultimo snapshot storage."))
     print("")
     rows = (latest.get("rankings") or {}).get("top_large_files") or []
-    for item in rows[:30]:
+    for item in rows[:TOP_DETAIL_LIMIT]:
         print(f"{item.get('app_id')}  {item.get('size_mb')} MB  {item.get('modified_at_utc')}  {item.get('path')}")
     if not rows:
         print("none")
@@ -531,18 +573,18 @@ def print_status_table(
     print(box_mid(TABLE_WIDTH))
     print(status_row("CPU cores", str(int(cpu_count))))
     print(status_row("Load avg", f"{avg(load_values)} media / {peak(load_values)} picco - {load_status(load_reference, cpu_count)}"))
-    print(status_detail(f"{load_bar(load_reference, cpu_count, width=58)} media"))
+    print(status_detail(f"{load_bar(load_reference, cpu_count, width=STATUS_BAR_WIDTH)} media"))
     print(status_detail("scala: 1.00/core = CPU occupata; >1.50/core = coda alta"))
     ram_pct = percent(avg_number(ram_values), ram_total)
     print(status_row("RAM used", f"{avg(ram_values)} MB media / {peak(ram_values)} MB picco - {fmt_pct(ram_pct)}"))
-    print(status_detail(f"{bar(ram_pct, 100, width=58)} media"))
+    print(status_detail(f"{bar(ram_pct, 100, width=STATUS_BAR_WIDTH)} media"))
     if swap_total and swap_total > 0:
         swap_pct = percent(avg_number(swap_values), swap_total)
         print(status_row("Swap used", f"{avg(swap_values)} MB media / {peak(swap_values)} MB picco - {fmt_pct(swap_pct)}"))
-        print(status_detail(f"{bar(swap_pct, 100, width=58)} media"))
+        print(status_detail(f"{bar(swap_pct, 100, width=STATUS_BAR_WIDTH)} media"))
     disk_pct = as_float(disk.get("used_pct"))
     print(status_row("Disk used", f"{bytes_to_gb(disk.get('used_bytes'))} GB / {bytes_to_gb(disk.get('total_bytes'))} GB - {fmt(disk.get('used_pct'))}%"))
-    print(status_detail(f"{bar(disk_pct, 100, width=58)} ultimo snapshot"))
+    print(status_detail(f"{bar(disk_pct, 100, width=STATUS_BAR_WIDTH)} ultimo snapshot"))
     print(status_row("Disk free", f"{bytes_to_gb(disk.get('free_bytes'))} GB"))
     print(status_row("Disk growth", f"{format_mb_or_gb(disk_growth_mb)} dal primo snapshot della finestra"))
     print(status_row("PHP-FPM proc", f"{avg(php_fpm_values)} media / {peak(php_fpm_values)} picco"))
@@ -813,7 +855,34 @@ def bar(value: float | None, maximum: float, width: int = 18) -> str:
         return "[" + "-" * width + "]"
     ratio = max(0.0, min(float(value) / maximum, 1.0))
     filled = int(round(ratio * width))
-    return "[" + "#" * filled + "-" * (width - filled) + "]"
+    return "[" + colored_bar_fill(filled, width) + "-" * (width - filled) + "]"
+
+
+def colored_bar_fill(filled: int, width: int) -> str:
+    if filled <= 0:
+        return ""
+    segments: list[str] = []
+    current_color = ""
+    current_text = ""
+    for index in range(filled):
+        color_code = bar_color_for_position(index, width)
+        if color_code != current_color and current_text:
+            segments.append(color(current_text, current_color))
+            current_text = ""
+        current_color = color_code
+        current_text += "#"
+    if current_text:
+        segments.append(color(current_text, current_color))
+    return "".join(segments)
+
+
+def bar_color_for_position(index: int, width: int) -> str:
+    position = (index + 1) / max(width, 1)
+    if position <= 0.30:
+        return LIME
+    if position <= 0.70:
+        return ORANGE
+    return RED
 
 
 def load_bar(load_value: float | None, cpu_count: float, width: int = 18) -> str:
