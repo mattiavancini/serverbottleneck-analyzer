@@ -13,6 +13,7 @@ from .discovery import discover_applications
 TOP_DIRS_LIMIT = 100
 TOP_DIRS_DEPTH = 4
 TOP_FILES_LIMIT = 20
+RANKING_LIMIT = 100
 RECENT_FILES_WINDOW_HOURS = 24
 DU_TIMEOUT_SEC = 20
 MAX_FILE_SCAN_ITEMS = 8000
@@ -35,7 +36,7 @@ def collect_storage_report(
 
     app_payloads = []
     for app in apps:
-        current = collect_app_storage(app.app_id, app.app_root, app.log_dir, fixture_mode)
+        current = collect_app_storage(app.app_id, app.app_root, app.log_dir, fixture_mode, previous_apps.get(app.app_id))
         add_delta(current, previous_apps.get(app.app_id), "delta_previous", timestamp, previous_payload)
         add_delta(current, baseline_apps.get(app.app_id), "delta_24h", timestamp, baseline_24h_payload)
         current["labels"] = classify_storage_app(current)
@@ -58,6 +59,7 @@ def collect_storage_report(
             "max_file_scan_depth": MAX_FILE_SCAN_DEPTH,
             "top_dirs_limit": TOP_DIRS_LIMIT,
             "top_files_limit": TOP_FILES_LIMIT,
+            "ranking_limit": RANKING_LIMIT,
             "recent_files_window_hours": RECENT_FILES_WINDOW_HOURS,
             "max_file_scan_items_per_app": MAX_FILE_SCAN_ITEMS,
             "du_timeout_sec": DU_TIMEOUT_SEC,
@@ -71,14 +73,24 @@ def collect_storage_report(
     }
 
 
-def collect_app_storage(app_id: str, app_root: Path, log_dir: Path, fixture_mode: bool) -> dict[str, Any]:
+def collect_app_storage(
+    app_id: str,
+    app_root: Path,
+    log_dir: Path,
+    fixture_mode: bool,
+    previous_app: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     paths = known_storage_paths(app_root, log_dir)
-    sizes = {name: size_path(path, fixture_mode) for name, path in paths.items()}
+    previous_sizes = (previous_app or {}).get("sizes_bytes") or {}
+    size_results = {name: size_path(path, fixture_mode, previous_sizes.get(name)) for name, path in paths.items()}
+    sizes = {name: result["size_bytes"] for name, result in size_results.items()}
     roots_for_file_scan = candidate_file_scan_roots(paths)
     return {
         "app_id": app_id,
         "app_root": str(app_root),
         "sizes_bytes": sizes,
+        "size_quality": {name: result["quality"] for name, result in size_results.items()},
+        "scan_warnings": [result["warning"] for result in size_results.values() if result.get("warning")],
         "paths": {name: str(path) for name, path in paths.items()},
         "top_directories": [] if fixture_mode else top_directories(app_root),
         "top_files": [] if fixture_mode else top_files(roots_for_file_scan, TOP_FILES_LIMIT, recent_only=False),
@@ -125,20 +137,49 @@ def candidate_file_scan_roots(paths: dict[str, Path]) -> list[Path]:
     return roots
 
 
-def size_path(path: Path, fixture_mode: bool = False) -> int:
+def size_path(path: Path, fixture_mode: bool = False, previous_size: Any = None) -> dict[str, Any]:
+    fallback_previous = int_or_zero(previous_size)
     if fixture_mode:
-        return 0
+        return size_result(0, "fixture", reliable=True)
     if not path.exists():
-        return 0
+        return size_result(0, "missing", reliable=True)
     if path.is_file():
         try:
-            return path.stat().st_size
+            return size_result(path.stat().st_size, "stat", reliable=True)
         except OSError:
-            return 0
+            return size_result(0, "stat_failed", reliable=False, warning=f"stat failed for {path}")
     du_size = du_size_bytes(path)
     if du_size is not None:
-        return du_size
-    return python_size_bytes(path, max_items=MAX_FILE_SCAN_ITEMS)
+        return size_result(du_size, "du", reliable=True)
+    python_size, truncated = python_size_bytes(path, max_items=MAX_FILE_SCAN_ITEMS)
+    if truncated and fallback_previous > python_size:
+        return size_result(
+            fallback_previous,
+            "previous_snapshot_after_incomplete_scan",
+            reliable=False,
+            warning=f"du failed and Python scan was truncated for {path}; kept previous snapshot size",
+        )
+    method = "python_truncated" if truncated else "python"
+    warning = f"du failed and Python scan was truncated for {path}" if truncated else f"du failed for {path}; used Python scan"
+    return size_result(python_size, method, reliable=not truncated, warning=warning)
+
+
+def size_result(size_bytes: int, method: str, reliable: bool, warning: str | None = None) -> dict[str, Any]:
+    return {
+        "size_bytes": int(size_bytes or 0),
+        "quality": {
+            "method": method,
+            "reliable": reliable,
+        },
+        "warning": warning,
+    }
+
+
+def int_or_zero(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def du_size_bytes(path: Path) -> int | None:
@@ -164,7 +205,7 @@ def du_size_bytes(path: Path) -> int | None:
     return None
 
 
-def python_size_bytes(path: Path, max_items: int) -> int:
+def python_size_bytes(path: Path, max_items: int) -> tuple[int, bool]:
     total = 0
     seen = 0
     for root, dirs, files in os.walk(path):
@@ -172,12 +213,12 @@ def python_size_bytes(path: Path, max_items: int) -> int:
         for filename in files:
             seen += 1
             if seen > max_items:
-                return total
+                return total, True
             try:
                 total += (Path(root) / filename).stat().st_size
             except OSError:
                 continue
-    return total
+    return total, False
 
 
 def top_directories(app_root: Path) -> list[dict[str, Any]]:
@@ -222,7 +263,7 @@ def python_top_directories(path: Path) -> list[dict[str, Any]]:
     rows = []
     for child in safe_iterdir(path):
         if child.is_dir():
-            size = python_size_bytes(child, max_items=MAX_FILE_SCAN_ITEMS)
+            size, _truncated = python_size_bytes(child, max_items=MAX_FILE_SCAN_ITEMS)
             rows.append({"path": str(child), "size_bytes": size, "size_mb": bytes_to_mb(size)})
     return rows
 
@@ -461,7 +502,7 @@ def compact_app_rows(apps: list[dict[str, Any]], delta_key: str) -> list[dict[st
             }
         )
     rows.sort(key=lambda item: (-(item["total_mb"] or 0), item["app_id"]))
-    return rows[:20]
+    return rows[:RANKING_LIMIT]
 
 
 def compact_total_rows(apps: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -474,7 +515,7 @@ def compact_total_rows(apps: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for app in apps
     ]
     rows.sort(key=lambda item: (-(item["total_mb"] or 0), item["app_id"]))
-    return rows[:20]
+    return rows[:RANKING_LIMIT]
 
 
 def top_large_files_global(apps: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -483,7 +524,7 @@ def top_large_files_global(apps: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for item in app.get("top_files") or []:
             rows.append({"app_id": app["app_id"], **item})
     rows.sort(key=lambda item: (-(item["size_bytes"] or 0), item["app_id"], item["path"]))
-    return rows[:20]
+    return rows[:RANKING_LIMIT]
 
 
 def build_top_suspects(apps: list[dict[str, Any]]) -> list[dict[str, Any]]:

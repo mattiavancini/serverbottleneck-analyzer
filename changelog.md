@@ -126,6 +126,14 @@ Nota operativa: la profondita aggiuntiva compare pienamente solo dai nuovi snaps
 - tutte le barre percentuali usano ora soglie colore: primo 30% lime, dal 31% al 70% arancio, ultimo 30% rosso
 - la logica colore e centralizzata nella funzione `bar`, quindi vale per riempimento finestra, load, RAM, swap e disco
 
+### Affidabilita dimensione app
+
+- aggiunta `size_quality` nello snapshot storage per indicare come e stata misurata ogni dimensione (`du`, `stat`, fallback Python, valore precedente)
+- aggiunti `scan_warnings` per rendere visibili scan incompleti o fallback non pienamente affidabili
+- se `du` fallisce e il fallback Python viene troncato, il collector mantiene la dimensione del precedente snapshot invece di sottostimare l'app
+- `APP SIZE TREE` marca con `!` le app con dimensione non pienamente affidabile nello snapshot corrente
+- ranking interni JSON aumentati a 100 righe, cosi le viste non perdono app importanti per limiti troppo bassi
+
 ## 2026-05-27 - Storage Growth Analyzer e dashboard SSH per WP_Q
 
 ### Contesto

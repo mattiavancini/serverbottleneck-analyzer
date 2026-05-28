@@ -243,12 +243,15 @@ def print_app_size_tree(latest_storage: dict[str, Any], server: str) -> None:
     root_size = sum(row["size_bytes"] for row in rows)
     print(title(f"APP SIZE TREE (ultimo snapshot, top {len(shown)} di {total_apps} app per dimensione)"))
     print(intro("Stai vedendo", "classifica delle app piu pesanti; il tree si ferma al nome app."))
+    if any(not row["reliable"] for row in shown):
+        print(intro("Nota", "! = dimensione mantenuta/stimata per scan incompleto; verificare con il prossimo snapshot"))
     print(f"{server}/".ljust(58) + format_tree_size(root_size))
     for index, row in enumerate(shown):
         is_last = index == len(shown) - 1 and len(shown) == total_apps
         connector = "`-- " if is_last else "|-- "
         label = f"{connector}{row['app_id']}/"
-        print(label.ljust(58) + format_tree_size(row["size_bytes"]))
+        marker = " !" if not row["reliable"] else ""
+        print(label.ljust(58) + format_tree_size(row["size_bytes"]) + marker)
     if total_apps > len(shown):
         remaining = total_apps - len(shown)
         remaining_size = sum(row["size_bytes"] for row in rows[len(shown) :])
@@ -260,9 +263,10 @@ def app_size_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
     for app in payload.get("apps") or []:
         app_id = app.get("app_id")
         size = int((app.get("sizes_bytes") or {}).get("total") or 0)
+        quality = ((app.get("size_quality") or {}).get("total") or {})
         if not app_id:
             continue
-        rows.append({"app_id": str(app_id), "size_bytes": size})
+        rows.append({"app_id": str(app_id), "size_bytes": size, "reliable": quality.get("reliable", True)})
     rows.sort(key=lambda row: (-row["size_bytes"], row["app_id"]))
     return rows
 
@@ -310,6 +314,9 @@ def show_app_detail(data_dir: Path, server: str) -> None:
     print(intro("Storage score", str(app.get("suspicion_score", 0))))
     print(intro("Nota", "lo storage score e solo un indicatore storage dell'ultimo snapshot; non include ancora performance/PHP."))
     print(intro("Labels", ", ".join(app.get("labels") or []) or "-"))
+    warnings = app.get("scan_warnings") or []
+    if warnings:
+        print(intro("Scan warnings", f"{len(warnings)} avvisi; alcune dimensioni possono essere stimate o mantenute dal precedente snapshot"))
     print("")
     print(title("Tree"))
     for line in render_app_tree(app):
