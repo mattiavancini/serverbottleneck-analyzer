@@ -35,13 +35,27 @@ def collect_storage_report(
     baseline_apps = apps_by_id(baseline_24h_payload)
 
     app_payloads = []
+    discovered_app_ids = set()
     for app in apps:
+        discovered_app_ids.add(app.app_id)
         current = collect_app_storage(app.app_id, app.app_root, app.log_dir, fixture_mode, previous_apps.get(app.app_id))
         add_delta(current, previous_apps.get(app.app_id), "delta_previous", timestamp, previous_payload)
         add_delta(current, baseline_apps.get(app.app_id), "delta_24h", timestamp, baseline_24h_payload)
         current["labels"] = classify_storage_app(current)
         current["suspicion_score"] = compute_storage_score(current)
         app_payloads.append(current)
+
+    carried_forward_apps = []
+    for app_id, previous_app in previous_apps.items():
+        if app_id in discovered_app_ids:
+            continue
+        current = carry_forward_missing_app(previous_app)
+        add_delta(current, previous_app, "delta_previous", timestamp, previous_payload)
+        add_delta(current, baseline_apps.get(app_id), "delta_24h", timestamp, baseline_24h_payload)
+        current["labels"] = sorted(set(classify_storage_app(current)) | {"missing_current_discovery"})
+        current["suspicion_score"] = compute_storage_score(current)
+        app_payloads.append(current)
+        carried_forward_apps.append(app_id)
 
     app_payloads.sort(key=storage_app_sort_key)
     rankings = build_rankings(app_payloads)
@@ -53,6 +67,12 @@ def collect_storage_report(
         "generated_at_utc": isoformat_utc(timestamp),
         "server_name": server_name,
         "fixture_mode": fixture_mode,
+        "app_coverage": {
+            "discovered_count": len(discovered_app_ids),
+            "reported_count": len(app_payloads),
+            "carried_forward_missing_count": len(carried_forward_apps),
+            "carried_forward_missing_apps": sorted(carried_forward_apps),
+        },
         "collection_policy": {
             "max_depth": MAX_FILE_SCAN_DEPTH,
             "top_dirs_depth": TOP_DIRS_DEPTH,
@@ -70,6 +90,32 @@ def collect_storage_report(
         "rankings": rankings,
         "top_suspects": top_suspects,
         "warnings": warnings,
+    }
+
+
+def carry_forward_missing_app(previous_app: dict[str, Any]) -> dict[str, Any]:
+    sizes = dict(previous_app.get("sizes_bytes") or {})
+    paths = dict(previous_app.get("paths") or {})
+    return {
+        "app_id": previous_app.get("app_id"),
+        "app_root": previous_app.get("app_root"),
+        "missing_current_discovery": True,
+        "carried_forward_from_previous": True,
+        "sizes_bytes": sizes,
+        "size_quality": {
+            name: {
+                "method": "previous_snapshot_missing_current_discovery",
+                "reliable": False,
+            }
+            for name in sizes
+        },
+        "scan_warnings": [
+            "app was present in previous storage snapshot but was not discovered in the current run; kept previous sizes"
+        ],
+        "paths": paths,
+        "top_directories": previous_app.get("top_directories") or [],
+        "top_files": previous_app.get("top_files") or [],
+        "recent_large_files": previous_app.get("recent_large_files") or [],
     }
 
 

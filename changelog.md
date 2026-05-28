@@ -143,6 +143,14 @@ Nota operativa: la profondita aggiuntiva compare pienamente solo dai nuovi snaps
 - rimosso il limite top 30 dalle schermate crescita menu 2/3/4: ora mostrano tutte le app con crescita positiva
 - la dashboard resta una sintesi per `TOP STORAGE GROWTH`, ma i dettagli non tagliano piu le app
 
+### App mancanti nella discovery corrente
+
+- il collector ora mantiene nel report le app presenti nello snapshot precedente ma non scoperte nella run corrente
+- le app mantenute vengono marcate con `missing_current_discovery` e `carried_forward_from_previous`
+- aggiunto blocco `app_coverage` nel JSON storage con conteggio app scoperte, riportate e mantenute dal precedente snapshot
+- `APP SIZE TREE` mostra `Discovery` e marca le app non trovate nella run corrente con `missing discovery`
+- il dettaglio app segnala quando le dimensioni sono state mantenute perche l'app non e stata scoperta nella run corrente
+
 ## 2026-05-27 - Storage Growth Analyzer e dashboard SSH per WP_Q
 
 ### Contesto
