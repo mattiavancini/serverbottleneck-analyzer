@@ -9,7 +9,7 @@ from email.message import EmailMessage
 from pathlib import Path
 from typing import Any
 
-from .storage import bytes_to_mb, load_storage_history, parse_iso
+from .storage import load_storage_history, parse_iso
 
 
 DEFAULT_CONFIG = Path("config/notifications.json")
@@ -49,15 +49,17 @@ def main(argv: list[str] | None = None) -> int:
         print("SMTP connection/login OK.")
         return 0
 
-    history = load_storage_history(args.data_dir.expanduser(), args.server)
-    if not history:
+    data_dir = args.data_dir.expanduser()
+    storage_history = load_storage_history(data_dir, args.server)
+    inspection_history = load_report_history(data_dir, args.server, "inspection-*.json")
+    if not storage_history:
         print(f"No storage snapshots found for server {args.server}.")
         return 1
 
     if args.mode == "daily":
-        subject, body, should_send = build_daily_report(args.server, history, config)
+        subject, body, should_send = build_daily_report(args.server, storage_history, inspection_history, config)
     else:
-        subject, body, should_send = build_alert_report(args.server, history, config)
+        subject, body, should_send = build_alert_report(args.server, storage_history, inspection_history, config)
 
     if args.dry_run:
         print(subject)
@@ -91,13 +93,18 @@ def load_config(path: Path) -> dict[str, Any]:
         raise SystemExit(f"Invalid JSON config {path}: {exc}") from exc
 
 
-def build_alert_report(server: str, history: list[dict[str, Any]], config: dict[str, Any]) -> tuple[str, str, bool]:
-    latest = history[-1]
+def build_alert_report(
+    server: str,
+    storage_history: list[dict[str, Any]],
+    inspection_history: list[dict[str, Any]],
+    config: dict[str, Any],
+) -> tuple[str, str, bool]:
+    latest = storage_history[-1]
     thresholds = config.get("thresholds") or {}
     disk = latest.get("server_disk") or {}
     used_pct = as_float(disk.get("used_pct"))
     free_gb = bytes_to_gb_number(disk.get("free_bytes"))
-    growth_24h_gb = disk_growth_gb(history, 24)
+    growth_24h_gb = disk_growth_gb(storage_history, 24)
     alerts = []
 
     used_limit = as_float(thresholds.get("disk_used_pct_critical"))
@@ -112,34 +119,39 @@ def build_alert_report(server: str, history: list[dict[str, Any]], config: dict[
 
     subject_prefix = "ALERT" if alerts else "OK"
     subject = f"[SBA] {subject_prefix} {server} disk status"
-    body = build_report_body(server, history, hours=24, top_limit=int_or_default((config.get("daily_report") or {}).get("top_apps"), 15), alerts=alerts)
+    body = build_report_body(server, storage_history, inspection_history, hours=24, alerts=alerts)
     return subject, body, bool(alerts) and bool((config.get("alerts") or {}).get("enabled", True))
 
 
-def build_daily_report(server: str, history: list[dict[str, Any]], config: dict[str, Any]) -> tuple[str, str, bool]:
+def build_daily_report(
+    server: str,
+    storage_history: list[dict[str, Any]],
+    inspection_history: list[dict[str, Any]],
+    config: dict[str, Any],
+) -> tuple[str, str, bool]:
     daily = config.get("daily_report") or {}
     hours = int_or_default(daily.get("hours"), 24)
-    top_limit = int_or_default(daily.get("top_apps"), 15)
     subject = f"[SBA] Daily report {server}"
-    body = build_report_body(server, history, hours=hours, top_limit=top_limit, alerts=[])
+    body = build_report_body(server, storage_history, inspection_history, hours=hours, alerts=[])
     return subject, body, bool(daily.get("enabled", True))
 
 
 def build_report_body(
     server: str,
-    history: list[dict[str, Any]],
+    storage_history: list[dict[str, Any]],
+    inspection_history: list[dict[str, Any]],
     hours: int,
-    top_limit: int,
     alerts: list[str],
 ) -> str:
-    latest = history[-1]
-    window = select_window(history, hours)
-    disk = latest.get("server_disk") or {}
-    coverage = latest.get("app_coverage") or {}
+    latest_storage = storage_history[-1]
+    storage_window = select_window(storage_history, hours)
+    inspection_window = select_window(inspection_history, hours)
+    latest_inspection = inspection_window[-1] if inspection_window else {}
+    disk = latest_storage.get("server_disk") or {}
     lines = [
         f"Server Bottleneck Analyzer - {server}",
-        f"Generated: {latest.get('generated_at_utc', 'n/a')}",
-        f"Window: last {hours}h, {len(window)} storage snapshots",
+        f"Generated: {latest_storage.get('generated_at_utc', 'n/a')}",
+        f"Window: last {hours}h, {len(storage_window)} storage snapshots, {len(inspection_window)} performance snapshots",
         "",
     ]
     if alerts:
@@ -147,65 +159,28 @@ def build_report_body(
         lines.extend(f"- {alert}" for alert in alerts)
         lines.append("")
 
+    load_values = [first_load(item) for item in inspection_window]
+    ram_values = [nested(item, "server_snapshot", "ram_used_mb") for item in inspection_window]
+    swap_values = [nested(item, "server_snapshot", "swap_used_mb") for item in inspection_window]
+    ram_total = last_number([nested(item, "server_snapshot", "ram_total_mb") for item in inspection_window])
+    swap_total = last_number([nested(item, "server_snapshot", "swap_total_mb") for item in inspection_window])
+    cpu_count = as_float(nested(latest_inspection, "server_snapshot", "cpu_count"))
+
     lines.extend(
         [
+            "SERVER STATUS",
+            f"- CPU cores: {format_number(cpu_count)}",
+            f"- CPU load avg: {format_number(avg_number(load_values))} avg / {format_number(peak_number(load_values))} peak",
+            f"- RAM avg: {format_number(avg_number(ram_values))} MB / total {format_number(ram_total)} MB ({format_pct(percent(avg_number(ram_values), ram_total))})",
+            f"- Swap avg: {format_number(avg_number(swap_values))} MB / total {format_number(swap_total)} MB ({format_pct(percent(avg_number(swap_values), swap_total))})",
+            "",
             "DISK",
-            f"- used: {bytes_to_gb(disk.get('used_bytes'))} / {bytes_to_gb(disk.get('total_bytes'))} GB ({disk.get('used_pct', 'n/a')}%)",
-            f"- free: {bytes_to_gb(disk.get('free_bytes'))} GB",
-            f"- growth {hours}h: {format_gb(disk_growth_gb(window, hours))}",
-            "",
-            "APP COVERAGE",
-            f"- discovered current run: {coverage.get('discovered_count', 'n/a')}",
-            f"- reported: {coverage.get('reported_count', 'n/a')}",
-            f"- carried missing: {coverage.get('carried_forward_missing_count', 0)}",
-            f"- deleted/moved candidates: {coverage.get('deleted_or_moved_candidate_count', 0)}",
-            f"- retired missing: {coverage.get('retired_missing_count', 0)}",
-            "",
-            f"TOP GROWTH APPS ({hours}h)",
+            f"- Disk usage: {bytes_to_gb(disk.get('used_bytes'))} / {bytes_to_gb(disk.get('total_bytes'))} GB ({disk.get('used_pct', 'n/a')}% used)",
+            f"- Disk free: {bytes_to_gb(disk.get('free_bytes'))} GB",
+            f"- Disk growth {hours}h: {format_gb(disk_growth_gb(storage_window, hours))}",
         ]
     )
-    growth_rows = growth_rows_for_window(window)
-    if growth_rows:
-        for row in growth_rows[:top_limit]:
-            lines.append(
-                f"- {row['app_id']}: +{bytes_to_mb(row['growth_bytes'])} MB, "
-                f"bucket={row['bucket'] or '-'}, rate={row['rate_mb_h']} MB/h"
-            )
-    else:
-        lines.append("- none")
-
-    lines.append("")
-    lines.append("TOP TOTAL APPS")
-    for row in ((latest.get("rankings") or {}).get("top_total_apps") or [])[:top_limit]:
-        lines.append(f"- {row.get('app_id')}: {row.get('total_mb')} MB")
     return "\n".join(lines)
-
-
-def growth_rows_for_window(window: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    if len(window) < 2:
-        return []
-    first = apps_by_id(window[0])
-    latest = apps_by_id(window[-1])
-    hours = max((parse_iso(window[-1].get("generated_at_utc")) - parse_iso(window[0].get("generated_at_utc"))).total_seconds() / 3600, 0.001)
-    rows = []
-    for app_id, latest_app in latest.items():
-        first_app = first.get(app_id)
-        if not first_app:
-            continue
-        deltas = bucket_deltas(first_app, latest_app)
-        growth = deltas.get("total", 0)
-        if growth <= 0:
-            continue
-        rows.append(
-            {
-                "app_id": app_id,
-                "growth_bytes": growth,
-                "bucket": main_growth_bucket(deltas),
-                "rate_mb_h": round(bytes_to_mb(growth) / hours, 2),
-            }
-        )
-    rows.sort(key=lambda item: (-item["growth_bytes"], item["app_id"]))
-    return rows
 
 
 def send_email(config: dict[str, Any], subject: str, body: str) -> None:
@@ -332,24 +307,68 @@ def disk_growth_gb(history: list[dict[str, Any]], hours: int) -> float | None:
     return round((latest - first) / (1024 * 1024 * 1024), 2)
 
 
-def apps_by_id(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return {str(app.get("app_id")): app for app in payload.get("apps") or [] if app.get("app_id")}
+def load_report_history(data_dir: Path, server_name: str, pattern: str) -> list[dict[str, Any]]:
+    base = data_dir / server_name
+    if not base.exists():
+        return []
+    payloads = []
+    for path in sorted(base.rglob(pattern)):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if payload.get("server_name") and payload.get("server_name") != server_name:
+            continue
+        payloads.append(payload)
+    payloads.sort(key=lambda item: parse_iso(item.get("generated_at_utc")))
+    return payloads
 
 
-def bucket_deltas(first_app: dict[str, Any], latest_app: dict[str, Any]) -> dict[str, int]:
-    first_sizes = first_app.get("sizes_bytes") or {}
-    latest_sizes = latest_app.get("sizes_bytes") or {}
-    keys = set(first_sizes) | set(latest_sizes)
-    return {key: int(latest_sizes.get(key, 0) or 0) - int(first_sizes.get(key, 0) or 0) for key in keys}
+def first_load(payload: dict[str, Any]) -> float | None:
+    values = nested(payload, "server_snapshot", "load_averages")
+    if isinstance(values, list) and values:
+        return as_float(values[0])
+    return None
 
 
-def main_growth_bucket(deltas: dict[str, int]) -> str | None:
-    ignored = {"total", "public_html", "wp_content"}
-    rows = [(key, value) for key, value in deltas.items() if key not in ignored and value > 0]
-    if not rows:
+def nested(payload: dict[str, Any], *keys: str) -> Any:
+    current: Any = payload
+    for key in keys:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def avg_number(values: list[Any]) -> float | None:
+    numbers = numbers_only(values)
+    if not numbers:
         return None
-    rows.sort(key=lambda item: (-item[1], item[0]))
-    return rows[0][0]
+    return round(sum(numbers) / len(numbers), 2)
+
+
+def peak_number(values: list[Any]) -> float | None:
+    numbers = numbers_only(values)
+    if not numbers:
+        return None
+    return round(max(numbers), 2)
+
+
+def last_number(values: list[Any]) -> float | None:
+    numbers = numbers_only(values)
+    if not numbers:
+        return None
+    return numbers[-1]
+
+
+def numbers_only(values: list[Any]) -> list[float]:
+    return [number for value in values if (number := as_float(value)) is not None]
+
+
+def percent(value: float | None, total: float | None) -> float | None:
+    if value is None or total is None or total <= 0:
+        return None
+    return round((value / total) * 100, 2)
 
 
 def as_float(value: Any) -> float | None:
@@ -378,6 +397,19 @@ def bytes_to_gb_number(value: Any) -> float | None:
     if number is None:
         return None
     return number / (1024 * 1024 * 1024)
+
+
+def format_number(value: Any) -> str:
+    number = as_float(value)
+    if number is None:
+        return "n/a"
+    if float(number).is_integer():
+        return str(int(number))
+    return str(round(number, 2))
+
+
+def format_pct(value: float | None) -> str:
+    return "n/a%" if value is None else f"{value}%"
 
 
 def format_gb(value: float | None) -> str:

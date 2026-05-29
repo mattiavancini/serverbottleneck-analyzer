@@ -258,7 +258,7 @@ Questo evita di confondere timeout/permessi negati con app spostate o cancellate
 Le notifiche sono separate dal collector. Il collector scrive JSON; lo script notifiche legge gli snapshot locali e invia:
 
 - alert spazio disco se supera le soglie
-- report giornaliero
+- report giornaliero con CPU load medio, RAM media, swap media e utilizzo disco
 
 Configurazione locale:
 

@@ -37,6 +37,17 @@ Soglie iniziali configurabili:
 - GB liberi critici
 - crescita disco 24h di warning
 
+### Report email essenziale
+
+Il report giornaliero SMTP e stato ridotto alle metriche server:
+
+- CPU load average medio e picco
+- RAM media
+- swap media
+- disk usage, spazio libero e crescita disco
+
+Rimosse temporaneamente le sezioni app dalla mail per ridurre rumore operativo.
+
 ## 2026-05-28 - Crescita su finestra disponibile
 
 ### Contesto
