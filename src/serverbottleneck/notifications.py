@@ -273,6 +273,13 @@ def smtp_summary(config: dict[str, Any]) -> str:
 
 def smtp_error_message(exc: BaseException, smtp: dict[str, Any], host: str, port: int) -> str:
     mode = "SSL/TLS diretto" if smtp.get("ssl") else ("STARTTLS" if smtp.get("starttls") else "plain")
+    if isinstance(exc, smtplib.SMTPAuthenticationError):
+        return (
+            f"SMTP authentication failed: {exc}\n"
+            f"Config usata: host={host} port={port} mode={mode} username={smtp.get('username') or 'n/a'}\n"
+            "Connessione e TLS sono arrivati al server SMTP, ma username/password sono stati rifiutati.\n"
+            "Verificare password mailbox, spazi copiati nel JSON, account SMTP attivo e username come email completa."
+        )
     return (
         f"SMTP failed: {exc}\n"
         f"Config usata: host={host} port={port} mode={mode}\n"
