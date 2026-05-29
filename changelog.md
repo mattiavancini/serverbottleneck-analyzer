@@ -166,6 +166,13 @@ Nota operativa: la profondita aggiuntiva compare pienamente solo dai nuovi snaps
 - lo stderr compatto viene salvato in `scan_warnings`
 - questo evita fallback Python troncati quando il dato utile di `du` era gia disponibile
 
+### Allineamento dashboard app e barra retention
+
+- `APP SIZE TREE` mostra colonne allineate `ORA`, `MAX`, `STATO`
+- la classifica app e ordinata per dimensione corrente (`ORA`), non piu per massimo osservato
+- `MAX` resta visibile solo quando serve, per indicare il massimo visto nella finestra
+- la barra `Riempimento` della finestra dati e ora celeste uniforme, separata dalle barre metriche lime/arancio/rosso
+
 ## 2026-05-27 - Storage Growth Analyzer e dashboard SSH per WP_Q
 
 ### Contesto

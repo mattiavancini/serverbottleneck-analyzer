@@ -16,6 +16,7 @@ COLOR_ENABLED = sys.stdout.isatty() and not os.environ.get("NO_COLOR") and os.en
 YELLOW = "1;33"
 GREEN = "32"
 LIME = "92"
+CYAN = "96"
 ORANGE = "38;5;208"
 RED = "31"
 DEFAULT_WINDOW_HOURS = 168
@@ -261,20 +262,26 @@ def print_app_size_tree(storage_window: list[dict[str, Any]], server: str) -> No
         print(intro("Nota", "missing discovery = app non trovata nella run corrente ma mantenuta dal precedente snapshot"))
     if any(row["dropped_from_window_max"] or not row["present_latest"] for row in rows):
         print(intro("Nota", "max = dimensione massima vista nella finestra; appare se l'ultimo snapshot e molto piu basso"))
-    print(f"{server}/".ljust(58) + format_tree_size(root_size))
+    print(f"{server}/".ljust(50) + f"{'ORA':>8} {'MAX':>8}  STATO")
+    print(f"{''.ljust(50)}{format_tree_size(root_size):>8} {'-':>8}")
     for index, row in enumerate(rows):
         is_last = index == len(rows) - 1
         connector = "`-- " if is_last else "|-- "
         label = f"{connector}{row['app_id']}/"
-        marker = " !" if not row["reliable"] else ""
+        markers = []
+        if not row["reliable"]:
+            markers.append("!")
         if row["missing_current_discovery"]:
-            marker += " missing discovery"
+            markers.append("missing discovery")
         if not row["present_latest"]:
-            marker += " missing latest"
-        size_text = format_tree_size(row["current_size_bytes"])
-        if row["dropped_from_window_max"] or not row["present_latest"]:
-            size_text += f" (max {format_tree_size(row['max_size_bytes'])})"
-        print(label.ljust(58) + size_text + marker)
+            markers.append("missing latest")
+        max_text = format_tree_size(row["max_size_bytes"]) if row["dropped_from_window_max"] or not row["present_latest"] else "-"
+        print(
+            label.ljust(50)
+            + f"{format_tree_size(row['current_size_bytes']):>8} "
+            + f"{max_text:>8}  "
+            + ", ".join(markers)
+        )
 
 
 def app_size_rows(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -307,7 +314,7 @@ def app_size_rows(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "reliable": quality.get("reliable", True),
             }
         )
-    rows.sort(key=lambda row: (-max(row["current_size_bytes"], row["max_size_bytes"]), row["app_id"]))
+    rows.sort(key=lambda row: (-row["current_size_bytes"], -row["max_size_bytes"], row["app_id"]))
     return rows
 
 
@@ -607,11 +614,11 @@ def print_window_table(
     print(box_mid(TABLE_WIDTH))
     if observed_hours is None:
         print(box_full(intro("Finestra dati", f"nessun confronto disponibile / target {format_hours(hours)}"), TABLE_WIDTH))
-        print(box_full(intro("Riempimento", f"{bar(0, 100, width=52)} 0.0%"), TABLE_WIDTH))
+        print(box_full(intro("Riempimento", f"{progress_bar(0, 100, width=52)} 0.0%"), TABLE_WIDTH))
     else:
         pct = min(max((observed_hours / max(hours, 1)) * 100, 0.0), 100.0)
         print(box_full(intro("Finestra dati", observed_label or format_hours(observed_hours)), TABLE_WIDTH))
-        print(box_full(intro("Riempimento", f"{bar(pct, 100, width=52)} {round(pct, 1)}% del target"), TABLE_WIDTH))
+        print(box_full(intro("Riempimento", f"{progress_bar(pct, 100, width=52)} {round(pct, 1)}% del target"), TABLE_WIDTH))
     print(box_bottom(TABLE_WIDTH))
 
 
@@ -916,6 +923,14 @@ def bar(value: float | None, maximum: float, width: int = 18) -> str:
     ratio = max(0.0, min(float(value) / maximum, 1.0))
     filled = int(round(ratio * width))
     return "[" + colored_bar_fill(filled, width) + "-" * (width - filled) + "]"
+
+
+def progress_bar(value: float | None, maximum: float, width: int = 18) -> str:
+    if value is None or maximum <= 0:
+        return "[" + "-" * width + "]"
+    ratio = max(0.0, min(float(value) / maximum, 1.0))
+    filled = int(round(ratio * width))
+    return "[" + color("#" * filled, CYAN) + "-" * (width - filled) + "]"
 
 
 def colored_bar_fill(filled: int, width: int) -> str:
