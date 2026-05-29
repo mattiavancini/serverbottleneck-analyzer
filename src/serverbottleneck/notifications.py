@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import smtplib
+import socket
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from pathlib import Path
@@ -20,14 +21,15 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "Examples:\n"
             "  python3 -m serverbottleneck.notifications --data-dir ../data --server WP_Q --mode alert --dry-run\n"
-            "  python3 -m serverbottleneck.notifications --data-dir ../data --server WP_Q --mode daily"
+            "  python3 -m serverbottleneck.notifications --data-dir ../data --server WP_Q --mode daily\n"
+            "  python3 -m serverbottleneck.notifications --data-dir ../data --server WP_Q --mode smtp-test"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--data-dir", type=Path, default=Path("../data"), help="Directory containing analyzer reports")
     parser.add_argument("--server", required=True, help="Server name, for example WP_Q")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="Local notification config JSON")
-    parser.add_argument("--mode", choices=["alert", "daily"], default="alert", help="Notification type to evaluate")
+    parser.add_argument("--mode", choices=["alert", "daily", "smtp-test"], default="alert", help="Notification type to evaluate")
     parser.add_argument("--dry-run", action="store_true", help="Print the email body without sending")
     parser.add_argument("--force", action="store_true", help="Ignore alert cooldown")
     return parser
@@ -36,6 +38,17 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     config = load_config(args.config)
+    if args.mode == "smtp-test":
+        if args.dry_run:
+            print(smtp_summary(config))
+            return 0
+        if not config.get("enabled", False):
+            print(f"Notifications disabled in {args.config}. Set enabled=true after SMTP configuration.")
+            return 0
+        test_smtp_connection(config)
+        print("SMTP connection/login OK.")
+        return 0
+
     history = load_storage_history(args.data_dir.expanduser(), args.server)
     if not history:
         print(f"No storage snapshots found for server {args.server}.")
@@ -212,15 +225,60 @@ def send_email(config: dict[str, Any], subject: str, body: str) -> None:
     host = require_value(smtp, "host")
     port = int_or_default(smtp.get("port"), 587)
     timeout = int_or_default(smtp.get("timeout_seconds"), 20)
+    try:
+        with open_smtp_client(smtp, host, port, timeout) as client:
+            maybe_login(client, smtp)
+            client.send_message(message)
+    except (OSError, smtplib.SMTPException, socket.timeout) as exc:
+        raise SystemExit(smtp_error_message(exc, smtp, host, port)) from exc
+
+
+def test_smtp_connection(config: dict[str, Any]) -> None:
+    smtp = config.get("smtp") or {}
+    host = require_value(smtp, "host")
+    port = int_or_default(smtp.get("port"), 587)
+    timeout = int_or_default(smtp.get("timeout_seconds"), 20)
+    try:
+        with open_smtp_client(smtp, host, port, timeout) as client:
+            maybe_login(client, smtp)
+    except (OSError, smtplib.SMTPException, socket.timeout) as exc:
+        raise SystemExit(smtp_error_message(exc, smtp, host, port)) from exc
+
+
+def open_smtp_client(smtp: dict[str, Any], host: str, port: int, timeout: int):
     server_cls = smtplib.SMTP_SSL if smtp.get("ssl") else smtplib.SMTP
-    with server_cls(host, port, timeout=timeout) as client:
-        if smtp.get("starttls") and not smtp.get("ssl"):
-            client.starttls()
-        username = smtp.get("username")
-        password = smtp.get("password")
-        if username and password:
-            client.login(username, password)
-        client.send_message(message)
+    client = server_cls(host, port, timeout=timeout)
+    if smtp.get("starttls") and not smtp.get("ssl"):
+        client.starttls()
+    return client
+
+
+def maybe_login(client: smtplib.SMTP, smtp: dict[str, Any]) -> None:
+    username = smtp.get("username")
+    password = smtp.get("password")
+    if username and password:
+        client.login(username, password)
+
+
+def smtp_summary(config: dict[str, Any]) -> str:
+    smtp = config.get("smtp") or {}
+    return (
+        f"SMTP config: host={smtp.get('host') or 'n/a'} "
+        f"port={smtp.get('port') or 'n/a'} "
+        f"starttls={bool(smtp.get('starttls'))} "
+        f"ssl={bool(smtp.get('ssl'))} "
+        f"username={smtp.get('username') or 'n/a'}"
+    )
+
+
+def smtp_error_message(exc: BaseException, smtp: dict[str, Any], host: str, port: int) -> str:
+    mode = "SSL/TLS diretto" if smtp.get("ssl") else ("STARTTLS" if smtp.get("starttls") else "plain")
+    return (
+        f"SMTP failed: {exc}\n"
+        f"Config usata: host={host} port={port} mode={mode}\n"
+        "Cause probabili: porta SMTP errata, ssl/starttls invertiti, host SMTP errato, porta filtrata dal provider/server.\n"
+        "Combinazioni comuni: 587 starttls=true ssl=false; 465 starttls=false ssl=true; 25 starttls=false ssl=false."
+    )
 
 
 def cooldown_active(data_dir: Path, server: str, config: dict[str, Any]) -> bool:
