@@ -30,6 +30,7 @@ TABLE_WIDTH = 98
 STATUS_LABEL_WIDTH = 16
 STATUS_VALUE_WIDTH = TABLE_WIDTH - STATUS_LABEL_WIDTH - 7
 STATUS_BAR_WIDTH = 56
+WINDOW_PROGRESS_WIDTH = 62
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -74,34 +75,28 @@ def run_menu(data_dir: Path, server: str, hours: int, servers: list[str]) -> Non
         print_dashboard(data_dir, current_server, current_hours)
         print("")
         print(title("MENU"))
-        print("[1] Server status")
-        print("[2] App cresciute ultima ora")
-        print("[3] App cresciute ultime 24 ore")
-        print("[4] App cresciute ultimi 7 giorni")
-        print("[5] Top directory pesanti")
-        print("[6] Top file grandi/recenti")
-        print("[7] Dettaglio app")
-        print("[8] Cambia server")
+        print("[1] App cresciute ultima ora")
+        print("[2] App cresciute ultime 24 ore")
+        print("[3] App cresciute ultimi 7 giorni")
+        print("[4] Top directory pesanti")
+        print("[5] Top file grandi/recenti")
+        print("[6] Dettaglio app")
         print("[0] Esci")
         choice = input("Scegli: ").strip()
         if choice == "0":
             return
         if choice == "1":
-            current_hours = ask_hours(current_hours)
-        elif choice == "2":
             show_growth(data_dir, current_server, 1)
-        elif choice == "3":
+        elif choice == "2":
             show_growth(data_dir, current_server, 24)
-        elif choice == "4":
+        elif choice == "3":
             show_growth(data_dir, current_server, 168)
-        elif choice == "5":
+        elif choice == "4":
             show_top_directories(data_dir, current_server)
-        elif choice == "6":
+        elif choice == "5":
             show_top_files(data_dir, current_server)
-        elif choice == "7":
+        elif choice == "6":
             show_app_detail(data_dir, current_server)
-        elif choice == "8":
-            current_server = choose_server(servers, current_server)
         pause()
 
 
@@ -204,11 +199,11 @@ def show_growth(data_dir: Path, server: str, hours: int) -> None:
 
 def growth_menu_title(hours: int) -> str:
     if hours == 1:
-        return "MENU 2 - APP CRESCIUTE - ULTIMA ORA"
+        return "MENU 1 - APP CRESCIUTE - ULTIMA ORA"
     if hours == 24:
-        return "MENU 3 - APP CRESCIUTE - ULTIME 24 ORE"
+        return "MENU 2 - APP CRESCIUTE - ULTIME 24 ORE"
     if hours == 168:
-        return "MENU 4 - APP CRESCIUTE - ULTIMI 7 GIORNI"
+        return "MENU 3 - APP CRESCIUTE - ULTIMI 7 GIORNI"
     return f"APP CRESCIUTE - ULTIME {hours}H"
 
 
@@ -598,11 +593,11 @@ def print_window_table(
     print(box_mid(TABLE_WIDTH))
     if observed_hours is None:
         print(box_full(intro("Finestra dati", f"nessun confronto disponibile / target {format_hours(hours)}"), TABLE_WIDTH))
-        print(box_full(intro("Riempimento", f"{progress_bar(0, 100, width=52)} 0.0%"), TABLE_WIDTH))
+        print(box_full(intro("Riempimento", f"{progress_bar(0, 100, width=WINDOW_PROGRESS_WIDTH)} 0.0%"), TABLE_WIDTH))
     else:
         pct = min(max((observed_hours / max(hours, 1)) * 100, 0.0), 100.0)
         print(box_full(intro("Finestra dati", observed_label or format_hours(observed_hours)), TABLE_WIDTH))
-        print(box_full(intro("Riempimento", f"{progress_bar(pct, 100, width=52)} {round(pct, 1)}% del target"), TABLE_WIDTH))
+        print(box_full(intro("Riempimento", f"{progress_bar(pct, 100, width=WINDOW_PROGRESS_WIDTH)} {round(pct, 1)}% del target"), TABLE_WIDTH))
     print(box_bottom(TABLE_WIDTH))
 
 

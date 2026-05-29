@@ -178,6 +178,13 @@ Nota operativa: la profondita aggiuntiva compare pienamente solo dai nuovi snaps
 - rimosso l'indicatore `PRINCIPALE` dal tree del dettaglio app
 - il tree ora mostra solo gerarchia e dimensioni, senza marker interpretativi ridondanti
 
+### Pulizia menu dashboard
+
+- rimosse le voci `Server status` e `Cambia server` dal menu SSH
+- rinumerate le azioni rimaste da 1 a 6
+- aggiornati i titoli delle schermate crescita per riflettere la nuova numerazione
+- allargata la barra celeste `Riempimento` della finestra dati fino alla larghezza utile della tabella
+
 ## 2026-05-27 - Storage Growth Analyzer e dashboard SSH per WP_Q
 
 ### Contesto
