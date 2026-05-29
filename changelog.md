@@ -159,6 +159,13 @@ Nota operativa: la profondita aggiuntiva compare pienamente solo dai nuovi snaps
 - la dashboard e il dettaglio app calcolano una dimensione effettiva anche sugli snapshot gia esistenti, evitando casi impossibili come root `194M` con figli da diversi GB
 - `Top directories` nel dettaglio usa parent inferiti, quindi `public_html` e `wp-content` non restano piu sotto i figli
 
+### Uso output `du` con errori non fatali
+
+- corretto il caso in cui `du` stampa una dimensione valida ma ritorna exit non-zero per `Permission denied`
+- il collector ora usa comunque il valore numerico prodotto da `du` e lo marca come `du_with_errors`
+- lo stderr compatto viene salvato in `scan_warnings`
+- questo evita fallback Python troncati quando il dato utile di `du` era gia disponibile
+
 ## 2026-05-27 - Storage Growth Analyzer e dashboard SSH per WP_Q
 
 ### Contesto

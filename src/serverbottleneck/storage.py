@@ -230,9 +230,15 @@ def size_path(path: Path, fixture_mode: bool = False, previous_size: Any = None)
             return size_result(path.stat().st_size, "stat", reliable=True)
         except OSError:
             return size_result(0, "stat_failed", reliable=False, warning=f"stat failed for {path}")
-    du_size = du_size_bytes(path)
-    if du_size is not None:
-        return size_result(du_size, "du", reliable=True)
+    du_result = du_size_bytes(path)
+    if du_result is not None:
+        method = "du" if du_result["reliable"] else "du_with_errors"
+        return size_result(
+            du_result["size_bytes"],
+            method,
+            reliable=du_result["reliable"],
+            warning=du_result.get("warning"),
+        )
     python_size, truncated = python_size_bytes(path, max_items=MAX_FILE_SCAN_ITEMS)
     if truncated and fallback_previous > python_size:
         return size_result(
@@ -268,7 +274,7 @@ def normalize_path(value: Any) -> str:
     return str(value or "").replace("\\", "/").rstrip("/")
 
 
-def du_size_bytes(path: Path) -> int | None:
+def du_size_bytes(path: Path) -> dict[str, Any] | None:
     commands = (
         ["du", "-s", "-B1", str(path)],
         ["du", "-sk", str(path)],
@@ -278,7 +284,7 @@ def du_size_bytes(path: Path) -> int | None:
             proc = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=DU_TIMEOUT_SEC)
         except (OSError, subprocess.TimeoutExpired):
             continue
-        if proc.returncode != 0 or not proc.stdout.strip():
+        if not proc.stdout.strip():
             continue
         first = proc.stdout.splitlines()[0].split()[0]
         try:
@@ -287,8 +293,23 @@ def du_size_bytes(path: Path) -> int | None:
             continue
         if "-sk" in cmd:
             value *= 1024
-        return value
+        stderr = compact_stderr(proc.stderr)
+        warning = None
+        reliable = True
+        if proc.returncode != 0:
+            reliable = False
+            warning = f"du returned {proc.returncode} for {path} but produced a usable size"
+            if stderr:
+                warning += f": {stderr}"
+        return {"size_bytes": value, "reliable": reliable, "warning": warning}
     return None
+
+
+def compact_stderr(value: str | None, limit: int = 240) -> str:
+    text = " | ".join(line.strip() for line in (value or "").splitlines() if line.strip())
+    if len(text) > limit:
+        return text[: limit - 1] + "…"
+    return text
 
 
 def python_size_bytes(path: Path, max_items: int) -> tuple[int, bool]:
@@ -327,7 +348,7 @@ def du_depth_rows(path: Path) -> list[dict[str, Any]]:
             proc = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=DU_TIMEOUT_SEC)
         except (OSError, subprocess.TimeoutExpired):
             continue
-        if proc.returncode != 0 or not proc.stdout.strip():
+        if not proc.stdout.strip():
             continue
         multiplier = 1024 if "-k" in cmd else 1
         rows = []
