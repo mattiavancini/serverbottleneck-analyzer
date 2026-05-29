@@ -236,6 +236,61 @@ Il dashboard usa barre testuali per disco/RAM/swap e normalizza il load average 
 - `>1.50/core`: coda alta, server sotto pressione
 - `>2.00/core`: overload forte
 
+### Ciclo vita app
+
+Lo storage JSON distingue due casi diversi:
+
+- app scoperta nella run, ma con scan parziale: `lifecycle.status=active`, `scan_state=partial`
+- app non scoperta nella run corrente: `lifecycle.status=missing_current_discovery`, dimensioni mantenute dal precedente snapshot
+
+Dopo `missing_app_grace_snapshots` snapshot consecutivi senza discovery, l'app diventa:
+
+```text
+lifecycle.status=deleted_or_moved_candidate
+```
+
+Dopo `missing_app_retire_snapshots` snapshot consecutivi senza discovery, l'app non viene piu riportata nello snapshot corrente. Gli snapshot storici restano nella retention dati.
+
+Questo evita di confondere timeout/permessi negati con app spostate o cancellate.
+
+## Notifiche SMTP
+
+Le notifiche sono separate dal collector. Il collector scrive JSON; lo script notifiche legge gli snapshot locali e invia:
+
+- alert spazio disco se supera le soglie
+- report giornaliero
+
+Configurazione locale:
+
+```bash
+cd ~/serverbottleneck/analyzer
+cp config/notifications.example.json config/notifications.json
+nano config/notifications.json
+```
+
+`config/notifications.json` non viene committato. Inserire host SMTP, porta, username, password, mittente e destinatari. Per `siti@automa.biz` servono almeno:
+
+- `smtp.host`
+- `smtp.port`
+- `smtp.username`
+- `smtp.password`
+- `smtp.from`
+- `smtp.to`
+
+Test senza invio:
+
+```bash
+SERVER_NAME=WP_Q ./scripts/send_notifications.sh alert --dry-run
+SERVER_NAME=WP_Q ./scripts/send_notifications.sh daily --dry-run
+```
+
+Cron consigliati:
+
+```cron
+12 * * * * cd $HOME/serverbottleneck/analyzer && SERVER_NAME=WP_Q ./scripts/send_notifications.sh alert >> $HOME/serverbottleneck/logs/notifications.log 2>&1
+30 7 * * * cd $HOME/serverbottleneck/analyzer && SERVER_NAME=WP_Q ./scripts/send_notifications.sh daily >> $HOME/serverbottleneck/logs/notifications.log 2>&1
+```
+
 ## Limiti noti
 
 - niente accesso ai log globali di sistema
@@ -243,7 +298,7 @@ Il dashboard usa barre testuali per disco/RAM/swap e normalizza il load average 
 - parsing basato sui formati osservati finora
 - `wp-cli` enrichment best effort
 - nessun invio HTTP verso servizio centrale ancora implementato
-- nessun trend storico aggregato lato server ancora implementato
+- nessun trend storico aggregato lato server centrale ancora implementato
 
 ## Roadmap essenziale
 

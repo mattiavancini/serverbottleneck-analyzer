@@ -1,0 +1,28 @@
+{
+  "enabled": false,
+  "smtp": {
+    "host": "smtp.example.com",
+    "port": 587,
+    "username": "siti@automa.biz",
+    "password": "CHANGE_ME",
+    "from": "siti@automa.biz",
+    "to": ["siti@automa.biz"],
+    "starttls": true,
+    "ssl": false,
+    "timeout_seconds": 20
+  },
+  "thresholds": {
+    "disk_used_pct_critical": 85,
+    "disk_free_gb_critical": 15,
+    "disk_growth_gb_24h_warning": 10
+  },
+  "alerts": {
+    "enabled": true,
+    "cooldown_hours": 6
+  },
+  "daily_report": {
+    "enabled": true,
+    "hours": 24,
+    "top_apps": 15
+  }
+}

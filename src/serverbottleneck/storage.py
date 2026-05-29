@@ -18,6 +18,8 @@ RECENT_FILES_WINDOW_HOURS = 24
 DU_TIMEOUT_SEC = 20
 MAX_FILE_SCAN_ITEMS = 8000
 MAX_FILE_SCAN_DEPTH = 8
+MISSING_APP_GRACE_SNAPSHOTS = 24
+MISSING_APP_RETIRE_SNAPSHOTS = 168
 
 
 def collect_storage_report(
@@ -39,6 +41,7 @@ def collect_storage_report(
     for app in apps:
         discovered_app_ids.add(app.app_id)
         current = collect_app_storage(app.app_id, app.app_root, app.log_dir, fixture_mode, previous_apps.get(app.app_id))
+        current["lifecycle"] = active_lifecycle(current, timestamp)
         add_delta(current, previous_apps.get(app.app_id), "delta_previous", timestamp, previous_payload)
         add_delta(current, baseline_apps.get(app.app_id), "delta_24h", timestamp, baseline_24h_payload)
         current["labels"] = classify_storage_app(current)
@@ -46,13 +49,23 @@ def collect_storage_report(
         app_payloads.append(current)
 
     carried_forward_apps = []
+    deleted_or_moved_candidate_apps = []
+    retired_missing_apps = []
     for app_id, previous_app in previous_apps.items():
         if app_id in discovered_app_ids:
             continue
-        current = carry_forward_missing_app(previous_app)
+        if next_missing_consecutive(previous_app) >= MISSING_APP_RETIRE_SNAPSHOTS:
+            retired_missing_apps.append(app_id)
+            continue
+        current = carry_forward_missing_app(previous_app, timestamp, previous_payload)
         add_delta(current, previous_app, "delta_previous", timestamp, previous_payload)
         add_delta(current, baseline_apps.get(app_id), "delta_24h", timestamp, baseline_24h_payload)
-        current["labels"] = sorted(set(classify_storage_app(current)) | {"missing_current_discovery"})
+        lifecycle_status = (current.get("lifecycle") or {}).get("status")
+        lifecycle_labels = {"missing_current_discovery"}
+        if lifecycle_status == "deleted_or_moved_candidate":
+            lifecycle_labels.add("deleted_or_moved_candidate")
+            deleted_or_moved_candidate_apps.append(app_id)
+        current["labels"] = sorted(set(classify_storage_app(current)) | lifecycle_labels)
         current["suspicion_score"] = compute_storage_score(current)
         app_payloads.append(current)
         carried_forward_apps.append(app_id)
@@ -72,6 +85,10 @@ def collect_storage_report(
             "reported_count": len(app_payloads),
             "carried_forward_missing_count": len(carried_forward_apps),
             "carried_forward_missing_apps": sorted(carried_forward_apps),
+            "deleted_or_moved_candidate_count": len(deleted_or_moved_candidate_apps),
+            "deleted_or_moved_candidate_apps": sorted(deleted_or_moved_candidate_apps),
+            "retired_missing_count": len(retired_missing_apps),
+            "retired_missing_apps": sorted(retired_missing_apps),
         },
         "collection_policy": {
             "max_depth": MAX_FILE_SCAN_DEPTH,
@@ -83,6 +100,8 @@ def collect_storage_report(
             "recent_files_window_hours": RECENT_FILES_WINDOW_HOURS,
             "max_file_scan_items_per_app": MAX_FILE_SCAN_ITEMS,
             "du_timeout_sec": DU_TIMEOUT_SEC,
+            "missing_app_grace_snapshots": MISSING_APP_GRACE_SNAPSHOTS,
+            "missing_app_retire_snapshots": MISSING_APP_RETIRE_SNAPSHOTS,
             "excluded_paths": [],
         },
         "server_disk": collect_fixture_disk_snapshot() if fixture_mode else collect_disk_snapshot(resolved_root),
@@ -93,14 +112,52 @@ def collect_storage_report(
     }
 
 
-def carry_forward_missing_app(previous_app: dict[str, Any]) -> dict[str, Any]:
+def active_lifecycle(app: dict[str, Any], timestamp: datetime) -> dict[str, Any]:
+    quality = app.get("size_quality") or {}
+    scan_state = "partial" if any(not (item or {}).get("reliable", True) for item in quality.values()) else "ok"
+    return {
+        "status": "active",
+        "discovered_current": True,
+        "carried_forward": False,
+        "missing_consecutive": 0,
+        "scan_state": scan_state,
+        "first_missing_at_utc": None,
+        "last_seen_at_utc": isoformat_utc(timestamp),
+    }
+
+
+def next_missing_consecutive(previous_app: dict[str, Any]) -> int:
+    previous_lifecycle = previous_app.get("lifecycle") or {}
+    return int_or_zero(previous_lifecycle.get("missing_consecutive")) + 1
+
+
+def carry_forward_missing_app(
+    previous_app: dict[str, Any],
+    timestamp: datetime,
+    previous_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
     sizes = dict(previous_app.get("sizes_bytes") or {})
     paths = dict(previous_app.get("paths") or {})
+    previous_lifecycle = previous_app.get("lifecycle") or {}
+    missing_consecutive = next_missing_consecutive(previous_app)
+    status = "deleted_or_moved_candidate" if missing_consecutive >= MISSING_APP_GRACE_SNAPSHOTS else "missing_current_discovery"
+    previous_generated_at = (previous_payload or {}).get("generated_at_utc")
+    first_missing_at = previous_lifecycle.get("first_missing_at_utc") or isoformat_utc(timestamp)
+    last_seen_at = previous_lifecycle.get("last_seen_at_utc") or previous_generated_at
     return {
         "app_id": previous_app.get("app_id"),
         "app_root": previous_app.get("app_root"),
         "missing_current_discovery": True,
         "carried_forward_from_previous": True,
+        "lifecycle": {
+            "status": status,
+            "discovered_current": False,
+            "carried_forward": True,
+            "missing_consecutive": missing_consecutive,
+            "scan_state": "not_discovered",
+            "first_missing_at_utc": first_missing_at,
+            "last_seen_at_utc": last_seen_at,
+        },
         "sizes_bytes": sizes,
         "size_quality": {
             name: {
@@ -110,7 +167,7 @@ def carry_forward_missing_app(previous_app: dict[str, Any]) -> dict[str, Any]:
             for name in sizes
         },
         "scan_warnings": [
-            "app was present in previous storage snapshot but was not discovered in the current run; kept previous sizes"
+            f"app was present in previous storage snapshot but was not discovered in the current run; kept previous sizes; lifecycle={status}"
         ],
         "paths": paths,
         "top_directories": previous_app.get("top_directories") or [],
@@ -540,6 +597,11 @@ def main_growth_bucket(deltas: dict[str, int]) -> str | None:
 
 def classify_storage_app(app: dict[str, Any]) -> list[str]:
     labels = []
+    lifecycle_status = (app.get("lifecycle") or {}).get("status")
+    if lifecycle_status == "missing_current_discovery":
+        labels.append("missing_current_discovery")
+    if lifecycle_status == "deleted_or_moved_candidate":
+        labels.append("deleted_or_moved_candidate")
     delta = app.get("delta_previous") or {}
     bucket = delta.get("main_growth_bucket")
     total_mb = delta.get("total_mb") or 0

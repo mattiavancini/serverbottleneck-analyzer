@@ -248,13 +248,17 @@ def print_app_size_tree(storage_window: list[dict[str, Any]], server: str) -> No
             intro(
                 "Discovery",
                 f"{coverage.get('discovered_count', 'n/a')} app scoperte nella run; "
-                f"{coverage.get('carried_forward_missing_count', 0)} mantenute dal precedente snapshot",
+                f"{coverage.get('carried_forward_missing_count', 0)} mantenute; "
+                f"{coverage.get('deleted_or_moved_candidate_count', 0)} candidate spostate/eliminate; "
+                f"{coverage.get('retired_missing_count', 0)} ritirate",
             )
         )
     if any(not row["reliable"] for row in rows):
         print(intro("Nota", "! = dimensione mantenuta/stimata per scan incompleto; verificare con il prossimo snapshot"))
     if any(row["missing_current_discovery"] for row in rows):
         print(intro("Nota", "missing discovery = app non trovata nella run corrente ma mantenuta dal precedente snapshot"))
+    if any(row["lifecycle_status"] == "deleted_or_moved_candidate" for row in rows):
+        print(intro("Nota", "deleted/moved? = app assente dalla discovery per piu snapshot consecutivi"))
     if any(row["dropped_from_window_max"] or not row["present_latest"] for row in rows):
         print(intro("Nota", "max = dimensione massima vista nella finestra; appare se l'ultimo snapshot e molto piu basso"))
     print(f"{server}/".ljust(50) + f"{'ORA':>8} {'MAX':>8}  STATO")
@@ -267,7 +271,10 @@ def print_app_size_tree(storage_window: list[dict[str, Any]], server: str) -> No
         if not row["reliable"]:
             markers.append("!")
         if row["missing_current_discovery"]:
-            markers.append("missing discovery")
+            if row["lifecycle_status"] == "deleted_or_moved_candidate":
+                markers.append(f"deleted/moved? {row['missing_consecutive']}x")
+            else:
+                markers.append(f"missing discovery {row['missing_consecutive']}x")
         if not row["present_latest"]:
             markers.append("missing latest")
         max_text = format_tree_size(row["max_size_bytes"]) if row["dropped_from_window_max"] or not row["present_latest"] else "-"
@@ -297,6 +304,7 @@ def app_size_rows(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
         current_size = app_effective_total_bytes(latest_app or {})
         quality = (((latest_app or {}).get("size_quality") or {}).get("total") or {})
         missing_current_discovery = bool((latest_app or {}).get("missing_current_discovery"))
+        lifecycle = (latest_app or {}).get("lifecycle") or {}
         dropped = max_size > 0 and current_size < max_size * 0.75 and (max_size - current_size) >= 512 * 1024 * 1024
         rows.append(
             {
@@ -306,6 +314,8 @@ def app_size_rows(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "present_latest": present_latest,
                 "dropped_from_window_max": dropped,
                 "missing_current_discovery": missing_current_discovery,
+                "lifecycle_status": lifecycle.get("status") or ("missing_current_discovery" if missing_current_discovery else "active"),
+                "missing_consecutive": int_or_zero(lifecycle.get("missing_consecutive")),
                 "reliable": quality.get("reliable", True),
             }
         )
@@ -356,6 +366,15 @@ def show_app_detail(data_dir: Path, server: str) -> None:
     print(intro("Storage score", str(app.get("suspicion_score", 0))))
     print(intro("Nota", "lo storage score e solo un indicatore storage dell'ultimo snapshot; non include ancora performance/PHP."))
     print(intro("Labels", ", ".join(app.get("labels") or []) or "-"))
+    lifecycle = app.get("lifecycle") or {}
+    if lifecycle:
+        print(
+            intro(
+                "Lifecycle",
+                f"{lifecycle.get('status', 'n/a')} | scan={lifecycle.get('scan_state', 'n/a')} | "
+                f"missing={lifecycle.get('missing_consecutive', 0)} | last_seen={compact_dt(lifecycle.get('last_seen_at_utc'))}",
+            )
+        )
     if app.get("missing_current_discovery"):
         print(intro("Discovery", "app non trovata nella run corrente; dimensioni mantenute dal precedente snapshot"))
     warnings = app.get("scan_warnings") or []

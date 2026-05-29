@@ -20,6 +20,8 @@ dist/
 # Local outputs
 reports/
 tests/
+config/notifications.json
+config/*.local.json
 
 # Temp / logs
 *.log

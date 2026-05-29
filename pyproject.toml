@@ -10,6 +10,7 @@ requires-python = ">=3.9"
 
 [project.scripts]
 serverbottleneck = "serverbottleneck.cli:main"
+serverbottleneck-notify = "serverbottleneck.notifications:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

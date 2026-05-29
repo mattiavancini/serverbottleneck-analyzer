@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-05-29 - Lifecycle app e notifiche SMTP
+
+### Ciclo vita app
+
+Aggiunta distinzione esplicita tra:
+
+- scan parziale di una app scoperta (`active`, `scan_state=partial`)
+- app non trovata dalla discovery corrente (`missing_current_discovery`)
+- app candidata a spostamento/eliminazione dopo piu snapshot mancanti (`deleted_or_moved_candidate`)
+- app ritirata dal report corrente dopo la finestra di retire, mantenendo comunque gli snapshot storici fino alla retention
+
+Il collector mantiene le dimensioni precedenti solo quando l'app manca dalla discovery, incrementando `missing_consecutive`.
+Timeout, permessi negati e scan incompleti restano invece legati all'app attiva e finiscono in `size_quality` / `scan_warnings`.
+
+### Notifiche
+
+Aggiunto sistema SMTP locale:
+
+- `config/notifications.example.json`
+- `src/serverbottleneck/notifications.py`
+- `scripts/send_notifications.sh`
+- comando package `serverbottleneck-notify`
+
+Le credenziali restano fuori git in `config/notifications.json`.
+
+Modalita disponibili:
+
+- `alert`: invia solo se le soglie disco sono superate, con cooldown
+- `daily`: report giornaliero con disco, copertura app e top growth
+- `--dry-run`: stampa contenuto email senza inviare
+
+Soglie iniziali configurabili:
+
+- percentuale disco usato critica
+- GB liberi critici
+- crescita disco 24h di warning
+
 ## 2026-05-28 - Crescita su finestra disponibile
 
 ### Contesto
