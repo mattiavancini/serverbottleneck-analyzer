@@ -173,6 +173,11 @@ Nota operativa: la profondita aggiuntiva compare pienamente solo dai nuovi snaps
 - `MAX` resta visibile solo quando serve, per indicare il massimo visto nella finestra
 - la barra `Riempimento` della finestra dati e ora celeste uniforme, separata dalle barre metriche lime/arancio/rosso
 
+### Pulizia tree dettaglio app
+
+- rimosso l'indicatore `PRINCIPALE` dal tree del dettaglio app
+- il tree ora mostra solo gerarchia e dimensioni, senza marker interpretativi ridondanti
+
 ## 2026-05-27 - Storage Growth Analyzer e dashboard SSH per WP_Q
 
 ### Contesto

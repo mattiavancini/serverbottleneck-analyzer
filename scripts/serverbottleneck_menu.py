@@ -392,8 +392,7 @@ def render_app_tree(app: dict[str, Any]) -> list[str]:
         lines.append("  nessuna directory pesante disponibile nello snapshot")
         return lines
 
-    main_path = main_tree_path(app, nodes)
-    render_children(app_root, "", lines, nodes, main_path, depth=0)
+    render_children(app_root, "", lines, nodes, depth=0)
     if len(lines) > TREE_MAX_LINES:
         return lines[:TREE_MAX_LINES] + ["  ... albero abbreviato: usa Top directories per la lista completa"]
     return lines
@@ -456,7 +455,6 @@ def render_children(
     prefix: str,
     lines: list[str],
     nodes: dict[str, int],
-    main_path: str | None,
     depth: int,
 ) -> None:
     children = direct_children(parent, nodes)
@@ -468,11 +466,10 @@ def render_children(
         connector = "`-- " if is_last else "|-- "
         child_prefix = "    " if is_last else "|   "
         name = tree_node_name(path)
-        marker = " <- PRINCIPALE" if path == main_path else ""
         label = f"{prefix}{connector}{name}/"
-        lines.append(label.ljust(58) + f"{format_tree_size(nodes[path])}{marker}")
+        lines.append(label.ljust(58) + format_tree_size(nodes[path]))
         if depth < 4:
-            render_children(path, prefix + child_prefix, lines, nodes, main_path, depth + 1)
+            render_children(path, prefix + child_prefix, lines, nodes, depth + 1)
 
 
 def direct_children(parent: str, nodes: dict[str, int]) -> list[str]:
@@ -486,19 +483,6 @@ def direct_children(parent: str, nodes: dict[str, int]) -> list[str]:
             output.append(path)
     output.sort(key=lambda path: (-nodes[path], path))
     return output
-
-
-def main_tree_path(app: dict[str, Any], nodes: dict[str, int]) -> str | None:
-    paths = app.get("paths") or {}
-    delta = app.get("delta_previous") or {}
-    bucket = delta.get("main_growth_bucket")
-    if isinstance(bucket, str) and paths.get(bucket):
-        path = normalize_path(paths.get(bucket))
-        if path in nodes:
-            return path
-    if not nodes:
-        return None
-    return max(nodes, key=lambda path: nodes[path])
 
 
 def normalize_path(value: Any) -> str:
